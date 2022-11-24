@@ -52,6 +52,7 @@ def variable_name_generator(used: set[str] = []):
 
 
 class ParentSetter(ast.NodeTransformer):
+    """Adds parent attribute to each node."""
     def visit(self, node):
         for child in ast.iter_child_nodes(node):
             child.parent = node
@@ -91,10 +92,21 @@ class CommentRemover(ast.NodeTransformer):
         return node
 
 
-def shorten_imports(tree, variable_name_generator=variable_name_generator()):
+class VariableRenamer(ast.NodeTransformer):
+    """Renames variables according to provided mapping."""
+    def __init__(self, mapping=None):
+        self.mapping = mapping or {}
+
+    def visit_Name(self, node):
+        if node.id in self.mapping:
+            node.id = self.mapping[node.id]
+        return node
+
+
+class ImportShortener(VariableRenamer):
     """Shorten imported library names.
     
-    >>> apply = lambda code: ast.unparse(shorten_imports(ast.parse(code))[0])
+    >>> apply = lambda code: ast.unparse(ImportShortener().visit(ast.parse(code)))
     >>> apply('import demiurgic')
     'import demiurgic as a'
     >>> apply('from demiurgic import palpitation')
@@ -106,22 +118,18 @@ def shorten_imports(tree, variable_name_generator=variable_name_generator()):
     import demiurgic as d
     d.palpitation()
     """
-    mapping = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                old = alias.asname or alias.name
-                mapping[old] = alias.asname = next(variable_name_generator)
-    rename_variables(tree, mapping)
-    return tree, mapping
+    def __init__(self, generator=variable_name_generator()):
+        super().__init__()
+        self.generator = generator
 
+    def _visit_ImportOrImportFrom(self, node):
+        for alias in node.names:
+            old = alias.asname or alias.name
+            self.mapping[old] = alias.asname = next(self.generator)
+        return node
 
-def rename_variables(tree, mapping):
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            if node.id in mapping:
-                node.id = mapping[node.id]
-    return mapping
+    visit_Import = _visit_ImportOrImportFrom
+    visit_ImportFrom = _visit_ImportOrImportFrom
 
 
 def main():
@@ -133,8 +141,7 @@ def main():
     CommentRemover().visit(tree)
 
     # obfuscate
-    generator = variable_name_generator()
-    shorten_imports(tree, generator)
+    ImportShortener().visit(tree)
 
     with open('tests/ours.py', 'w') as f:
         f.write(ast.unparse(tree))
