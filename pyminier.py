@@ -51,12 +51,46 @@ def variable_name_generator(used: set[str] = []):
         cur += 1
 
 
+def shorten_imports(tree, variable_name_generator=variable_name_generator()):
+    """Shorten imported library names.
+    
+    >>> apply = lambda code: ast.unparse(shorten_imports(ast.parse(code))[0])
+    >>> apply('import demiurgic')
+    'import demiurgic as a'
+    >>> apply('from demiurgic import palpitation')
+    'from demiurgic import palpitation as b'
+    >>> print(apply('import demiurgic;demiurgic.palpitation()'))
+    import demiurgic as c
+    c.palpitation()
+    >>> print(apply('import demiurgic as dei;dei.palpitation()'))
+    import demiurgic as d
+    d.palpitation()
+    """
+    mapping = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                old = alias.asname or alias.name
+                mapping[old] = alias.asname = next(variable_name_generator)
+    rename_variables(tree, mapping)
+    return tree, mapping
+
+
+def rename_variables(tree, mapping):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if node.id in mapping:
+                node.id = mapping[node.id]
+    return mapping
+
+
 def main():
     with open('tests/test.py') as f:
         tree = ast.parse(f.read())
 
-    # print(ast.dump(tree))
-    tree.body[1].body[0].names[0].asname = 'd'
+    generator = variable_name_generator()
+    shorten_imports(tree, generator)
+
     print(ast.unparse(tree))
 
 
