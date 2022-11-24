@@ -51,6 +51,46 @@ def variable_name_generator(used: set[str] = []):
         cur += 1
 
 
+class ParentSetter(ast.NodeTransformer):
+    def visit(self, node):
+        for child in ast.iter_child_nodes(node):
+            child.parent = node
+        return super().visit(node)
+
+
+class CommentRemover(ast.NodeTransformer):
+    """Drop all comments, both single-line and docstrings.
+    
+    >>> def apply(code):
+    ...     tree = ast.parse(code)
+    ...     tree = ParentSetter().visit(tree)
+    ...     tree = CommentRemover().visit(tree)
+    ...     return ast.unparse(tree)
+    ...
+    >>> apply('1 + 1  # comment')
+    '1 + 1'
+    >>> print(apply('''
+    ... def square(x):
+    ...     \\'\\'\\'Return the square of x.\\'\\'\\'
+    ...     return x ** 2
+    ... '''))
+    def square(x):
+        return x ** 2
+    >>> print(apply('''
+    ... def square(x):
+    ...     \\'\\'\\'Return the square of x.\\'\\'\\'
+    ... '''))
+    def square(x):
+        0
+    """
+    def visit_Expr(self, node):
+        if isinstance(node.value, ast.Constant):
+            if len(node.parent.body) == 1:  # if body is just the comment
+                return ast.parse('0').body[0]  # replace comment with 0
+            return None  # otherwise, remove comment
+        return node
+
+
 def shorten_imports(tree, variable_name_generator=variable_name_generator()):
     """Shorten imported library names.
     
@@ -88,10 +128,16 @@ def main():
     with open('tests/test.py') as f:
         tree = ast.parse(f.read())
 
+    # minify
+    ParentSetter().visit(tree)
+    CommentRemover().visit(tree)
+
+    # obfuscate
     generator = variable_name_generator()
     shorten_imports(tree, generator)
 
-    print(ast.unparse(tree))
+    with open('tests/ours.py', 'w') as f:
+        f.write(ast.unparse(tree))
 
 
 if __name__ == '__main__':
