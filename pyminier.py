@@ -1,5 +1,5 @@
 import ast
-from typing import List
+from typing import Dict, List
 
 
 def number_to_digits(n: int, base: int = 10) -> List[int]:
@@ -106,7 +106,7 @@ class VariableRenamer(ast.NodeTransformer):
 class ImportShortener(VariableRenamer):
     """Shorten imported library names.
     
-    >>> apply = lambda code: ast.unparse(ImportShortener().visit(ast.parse(code)))
+    >>> apply = lambda src: ast.unparse(ImportShortener().visit(ast.parse(src)))
     >>> apply('import demiurgic')
     'import demiurgic as a'
     >>> apply('from demiurgic import palpitation')
@@ -132,6 +132,81 @@ class ImportShortener(VariableRenamer):
     visit_ImportFrom = _visit_ImportOrImportFrom
 
 
+def segment_by_indentation(source: str) -> List[Dict]:
+    """Segment provided source code by indentation level.
+
+    >>> segment_by_indentation('''
+    ... def square(x):
+    ...     return x ** 2
+    ... ''')
+    [{'indents': 0, 'lines': ['', 'def square(x):']}, {'indents': 4, 'lines': ['return x ** 2']}]
+    """
+    segments = []
+    segment = None
+    for line in source.splitlines():
+        indents = len(line) - len(line.lstrip())
+        line = line.lstrip()
+        if segment is None:
+            segment = {'indents': indents, 'lines': [line]}
+        elif indents != segment['indents']:
+            segments.append(segment)
+            segment = {'indents': indents, 'lines': [line]}
+        else:
+            segment['lines'].append(line)
+    if segment:
+        segments.append(segment)
+    return segments
+
+
+class WhitespaceRemover(ast.NodeTransformer):
+    """Remove all whitespace.
+
+    Performs the following whitespace removals:
+    - removes blank lines
+    - removes trailing whitespace
+    - create 1-liners from no-colon segments
+    - TODO: use 1-space indentation
+    - TODO: merge 1-liners with previous colon-suffixed segment
+    
+    >>> apply = lambda src: WhitespaceRemover().handle(src)
+    >>> apply('''
+    ... 
+    ... x = 7   
+    ... ''')  # drop all blank lines + remove trailing whitespace
+    'x = 7'
+    >>> apply('''
+    ... 
+    ... def square(x):
+    ...     x += 1
+    ...     return x ** 2
+    ... ''')  # combines lines + merges with def line
+    """
+    def handle(self, source: str):
+        # remove blank lines
+        source = '\n'.join(filter(bool, source.splitlines()))
+
+        # remove trailing whitespace
+        source = '\n'.join(line.rstrip() for line in source.splitlines())
+
+        # segment file by indentation
+        segments = segment_by_indentation(source)
+
+        # for any segment without a colon, merge into one line
+        for segment in segments:
+            if not any(line.strip().endswith(':') for line in segment['lines']):
+                segment['lines'] = [';'.join(segment['lines'])]
+
+        # TODO: merge one-liners with previous segment, if the previous ends in a colon
+
+        # regenerate source, where indents use only 1 space
+        source = '\n'.join(
+            '\n'.join([' ' * segment['indents'] + line for line in segment['lines']])
+            for segment in segments
+        )
+        
+        return source
+
+
 def main():
     with open('tests/test.py') as f:
         tree = ast.parse(f.read())
@@ -143,8 +218,11 @@ def main():
     # obfuscate
     ImportShortener().visit(tree)
 
+    string = ast.unparse(tree)
+    string = WhitespaceRemover().handle(string)
+
     with open('tests/ours.py', 'w') as f:
-        f.write(ast.unparse(tree))
+        f.write(string)
 
 
 if __name__ == '__main__':
