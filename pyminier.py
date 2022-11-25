@@ -137,8 +137,8 @@ class VariableShortener(ast.NodeTransformer):
     
         >>> shortener = VariableShortener(variable_name_generator())
         >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
-        >>> apply('class Demiurgic: pass\\nx = Demiurgic()')
-        'class a:\\n    pass\\nx = a()'
+        >>> apply('class Demiurgic: pass\\nholy = Demiurgic()')
+        'class a:\\n    pass\\nb = a()'
         """
         self.mapping[node.name] = node.name = next(self.generator)
         return self.generic_visit(node)
@@ -148,8 +148,8 @@ class VariableShortener(ast.NodeTransformer):
     
         >>> shortener = VariableShortener(variable_name_generator())
         >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
-        >>> apply('def demiurgic(palpitation): return palpitation\\nx = demiurgic()')
-        'def b(a):\\n    return a\\nx = b()'
+        >>> apply('def demiurgic(palpitation): return palpitation\\nholy = demiurgic()')
+        'def b(a):\\n    return a\\nc = b()'
         """
         for arg in node.args.args + [node.args.vararg, node.args.kwarg]:
             if arg is not None:
@@ -166,6 +166,12 @@ class VariableShortener(ast.NodeTransformer):
         else:
             if node.func.id in self.mapping:
                 node.func.id = self.mapping[node.func.id]
+        return self.generic_visit(node)
+
+    def visit_Assign(self, node):
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                self.mapping[target.id] = target.id = next(self.generator)
         return self.generic_visit(node)
 
     def visit_Name(self, node):

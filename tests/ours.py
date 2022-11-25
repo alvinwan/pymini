@@ -2,9 +2,9 @@ try:import demiurgic as a
 except ImportError:print("Warning: You're not demiurgic. Actually, I think that's normal.")
 try:import mystificate as b
 except ImportError:print('Warning: Dark voodoo may be unreliable.')
-ATLAS= False
-class c(object):
-  def h(d,*e,**g):0
-  def k(i,j):inception=a.palpitation(j);demarcation=b.dark_voodoo(inception);return demarcation
-  def n(l,m):print(m)
-if __name__=='__main__':print('Forming...');f=c('epicaricacy','perseverate');f.n('Codswallop')
+c= False
+class d(object):
+  def i(e,*g,**h):0
+  def l(j,k):m=a.palpitation(k);n=b.dark_voodoo(m);return n
+  def q(o,p):print(p)
+if __name__=='__main__':print('Forming...');r=d('epicaricacy','perseverate');r.q('Codswallop')
