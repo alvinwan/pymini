@@ -4,7 +4,7 @@ try:import mystificate as b
 except ImportError:print('Warning: Dark voodoo may be unreliable.')
 ATLAS= False
 class c(object):
-  def d(self,*args,**kwargs):0
-  def e(self,dactyl):inception=a.palpitation(dactyl);demarcation=b.dark_voodoo(inception);return demarcation
-  def g(self,whatever):print(whatever)
-if __name__=='__main__':print('Forming...');f=c('epicaricacy','perseverate');f.g('Codswallop')
+  def h(d,*e,**g):0
+  def k(i,j):inception=a.palpitation(j);demarcation=b.dark_voodoo(inception);return demarcation
+  def n(l,m):print(m)
+if __name__=='__main__':print('Forming...');f=c('epicaricacy','perseverate');f.n('Codswallop')

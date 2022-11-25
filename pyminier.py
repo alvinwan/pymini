@@ -132,22 +132,32 @@ class VariableShortener(ast.NodeTransformer):
     visit_Import = _visit_ImportOrImportFrom
     visit_ImportFrom = _visit_ImportOrImportFrom
 
-    def _visit_ClassOrFunctionDef(self, node):
+    def visit_ClassDef(self, node):
         """Shorten class names.
     
         >>> shortener = ClassOrFunctionShortener(variable_name_generator())
         >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
         >>> apply('class Demiurgic: pass\\nx = Demiurgic()')
         'class a:\\n    pass\\nx = a()'
-        >>> apply('def demiurgic(): pass\\nx = demiurgic()')
-        'def b():\\n    pass\\nx = b()'
         """
         self.mapping[node.name] = node.name = next(self.generator)
         return self.generic_visit(node)
 
-    visit_ClassDef = _visit_ClassOrFunctionDef
-    visit_FunctionDef = _visit_ClassOrFunctionDef
-    visit_AsyncFunctionDef = _visit_ClassOrFunctionDef
+    def visit_FunctionDef(self, node):
+        """Shorten function and argument names.
+    
+        >>> shortener = ClassOrFunctionShortener(variable_name_generator())
+        >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
+        >>> apply('def demiurgic(): pass\\nx = demiurgic()')
+        'def b():\\n    pass\\nx = b()'
+        """
+        for arg in node.args.args + [node.args.vararg, node.args.kwarg]:
+            if arg is not None:
+                self.mapping[arg.arg] = arg.arg = next(self.generator)
+        self.mapping[node.name] = node.name = next(self.generator)
+        return self.generic_visit(node)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
     
     def visit_Call(self, node):
         if isinstance(node.func, ast.Attribute):
