@@ -158,8 +158,22 @@ class VariableShortener(ast.NodeTransformer):
         return self.generic_visit(node)
 
     visit_AsyncFunctionDef = visit_FunctionDef
-    
+
+    def visit_Assign(self, node):
+        """Shorten newly-defined variable names.
+        
+        >>> shortener = VariableShortener(variable_name_generator())
+        >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
+        >>> apply('demiurgic = 1\\nholy = demiurgic')
+        'a = 1\\nb = a'
+        """
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                self.mapping[target.id] = target.id = next(self.generator)
+        return self.generic_visit(node)
+
     def visit_Call(self, node):
+        """Apply renamed function names."""
         if isinstance(node.func, ast.Attribute):
             if node.func.attr in self.mapping:
                 node.func.attr = self.mapping[node.func.attr]
@@ -168,13 +182,8 @@ class VariableShortener(ast.NodeTransformer):
                 node.func.id = self.mapping[node.func.id]
         return self.generic_visit(node)
 
-    def visit_Assign(self, node):
-        for target in node.targets:
-            if isinstance(target, ast.Name):
-                self.mapping[target.id] = target.id = next(self.generator)
-        return self.generic_visit(node)
-
     def visit_Name(self, node):
+        """Apply renamed variables."""
         if node.id in self.mapping:
             node.id = self.mapping[node.id]
         return self.generic_visit(node)
