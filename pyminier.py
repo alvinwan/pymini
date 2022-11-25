@@ -3,6 +3,45 @@ import keyword
 from typing import Dict, List
 
 
+class ReturnSimplifier(ast.NodeTransformer):
+    """Simplify return statements in the following form:
+    
+        x = (some code)
+        return x
+        
+    to
+    
+        return (some code)
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name_to_node = {}
+        self.unused_names = set()
+
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            self.name_to_node[node.targets[0].id] = node
+        return self.generic_visit(node)
+
+    def visit_Return(self, node: ast.Return) -> ast.Return:
+        if isinstance(node.value, ast.Name):
+            self.unused_names.add(node.value.id)
+            node = self.name_to_node[node.value.id]
+            return ast.Return(value=node.value)
+        return self.generic_visit(node)
+
+
+class CleanupUnusedNames(ast.NodeTransformer):
+    def __init__(self, unused_names: set[str]):
+        super().__init__()
+        self.unused_names = unused_names
+
+    def visit_Assign(self, node: ast.Name) -> ast.Name:
+        if node.targets[0].id in self.unused_names:
+            return None
+        return self.generic_visit(node)
+
+
 def number_to_digits(n: int, base: int = 10) -> List[int]:
     """Convert a number to a list of digits.
     
@@ -417,6 +456,11 @@ class WhitespaceRemover(ast.NodeTransformer):
 def main():
     with open('tests/test.py') as f:
         tree = ast.parse(f.read())
+
+    # simplify
+    simplifier = ReturnSimplifier()
+    simplifier.visit(tree)
+    CleanupUnusedNames(simplifier.unused_names).visit(tree)
 
     # minify
     ParentSetter().visit(tree)
