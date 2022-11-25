@@ -46,4 +46,4 @@ total 24
 -rw-r--r--  1 alvinwan  staff   490B Nov 25 01:18 pyminify.py
 ```
 
-Here, `uglipy` achieves the smallest file size, 15% smaller than `pyminify` and 30% smaller than `pyminifier`.
+By comparison, the original file size was 1355B; `uglipy` achieves the smallest file size, 15% smaller than `pyminify` and 30% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 64% to 69%.
