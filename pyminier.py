@@ -1,4 +1,5 @@
 import ast
+import keyword
 from typing import Dict, List
 
 
@@ -138,23 +139,24 @@ class WhitespaceRemover(ast.NodeTransformer):
     Performs the following whitespace removals:
     - removes blank lines
     - removes trailing whitespace
-    - create 1-liners from no-colon segments
+    - create 1-liners
     - use 1-space indentation
-    - TODO: merge 1-liners with previous colon-suffixed segment
+    - merge 1-liners with previous line where possible
+    - remove extra whitespace around characters
     
     >>> apply = lambda src: WhitespaceRemover().handle(src)
     >>> apply('''
     ... 
     ... x = 7   
     ... ''')  # drop all blank lines + remove trailing whitespace
-    'x = 7'
+    'x=7'
     >>> apply('''
     ... 
     ... def square(x):
     ...     x += 1
     ...     return x ** 2
     ... ''')  # combines lines + merges with def line
-    'def square(x):x += 1;return x ** 2'
+    'def square(x):x+=1;return x**2'
     """
     def handle(self, source: str):
         # remove blank lines
@@ -180,6 +182,9 @@ class WhitespaceRemover(ast.NodeTransformer):
             '\n'.join([' ' * segment['indents'] + line for line in segment['lines']])
             for segment in segments
         )
+
+        # remove extraneous whitespace
+        source = self.remove_extraneous_whitespace(source)
         
         return source
 
@@ -296,6 +301,33 @@ class WhitespaceRemover(ast.NodeTransformer):
             '\n'.join([' ' * segment['indents'] + line for line in segment['lines']])
             for segment in segments
         )
+
+    def remove_extraneous_whitespace(self, source: str) -> str:
+        """Remove all unneeded whitespace.
+        
+        >>> remover = WhitespaceRemover()
+        >>> remover.remove_extraneous_whitespace('''def square( x ) : return x ** 2''')
+        'def square(x):return x**2'
+        >>> remover.remove_extraneous_whitespace('''try : import os''')
+        'try:import os'
+        """
+        import tokenize
+        from io import StringIO
+        lines = []
+        for line in source.splitlines():
+            tokens = []
+            last_token = None
+            for token in tokenize.generate_tokens(StringIO(line).readline):
+                token = token.string
+                if token in keyword.kwlist and tokens and last_token not in ':;':
+                    tokens.append(token)
+                elif tokens and (last_token not in keyword.kwlist or token in ':;'):
+                    tokens[-1] += token
+                else:
+                    tokens.append(token)
+                last_token = token
+            lines.append(' '.join(tokens))
+        return '\n'.join(lines)
 
 
 def main():
