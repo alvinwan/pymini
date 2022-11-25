@@ -38,7 +38,7 @@ class CleanupUnusedNames(ast.NodeTransformer):
         self.unused_names = unused_names
 
     def visit_Assign(self, node: ast.Name) -> ast.Name:
-        if node.targets[0].id in self.unused_names:
+        if isinstance(node.targets[0], ast.Name) and node.targets[0].id in self.unused_names:
             return None
         return self.generic_visit(node)
 
