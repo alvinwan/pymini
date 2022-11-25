@@ -419,7 +419,7 @@ def main():
         tree = ast.parse(f.read())
 
     # minify
-    ParentSetter(get_root(tree)).visit(tree)
+    ParentSetter().visit(tree)
     CommentRemover().visit(tree)
 
     # obfuscate
