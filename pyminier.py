@@ -366,9 +366,9 @@ class WhitespaceRemover(ast.NodeTransformer):
             last_token = None
             for token in tokenize.generate_tokens(StringIO(line).readline):
                 token = token.string
-                if token in keyword.kwlist and tokens and last_token not in ':;':
+                if token in keyword.kwlist and tokens and last_token not in ':;=':
                     tokens.append(token)
-                elif tokens and (last_token not in keyword.kwlist or token in ':;'):
+                elif tokens and (last_token not in keyword.kwlist or token in ':;='):
                     tokens[-1] += token
                 else:
                     tokens.append(token)
