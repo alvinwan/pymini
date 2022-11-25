@@ -266,7 +266,7 @@ class VariableShortener(ast.NodeTransformer):
             self.name_to_node[node.id] = node
         return self.generic_visit(node)
 
-    def visit_Str(self, node):
+    def visit_Constant(self, node):
         """Shorten string literals that are repeated.
         
         >>> shortener = VariableShortener(variable_name_generator())
@@ -285,6 +285,8 @@ class VariableShortener(ast.NodeTransformer):
         >>> apply("demiurgic = 'demiurgic'")
         'e = c'
         """
+        if not isinstance(node.s, str):  # TODO: generic for all constants?
+            return node
         # TODO: this is a copy of visit_Name, basically
         if node.s in self.str_mapping.values():  # TODO: make more efficient
             return node
@@ -520,9 +522,8 @@ class WhitespaceRemover(ast.NodeTransformer):
         return '\n'.join(lines)
 
 
-def main():
-    with open(sys.argv[1]) as f:
-        tree = ast.parse(f.read())
+def uglipy(source):
+    tree = ast.parse(source)
 
     # simplify
     simplifier = ReturnSimplifier()
@@ -544,7 +545,12 @@ def main():
     string = ast.unparse(tree)
     string = WhitespaceRemover().handle(string)
 
-    print(string)
+    return string
+
+
+def main():
+    with open(sys.argv[1]) as f:
+        print(uglipy(f.read()))
 
 
 if __name__ == '__main__':
