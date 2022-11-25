@@ -162,6 +162,9 @@ class VariableShortener(ast.NodeTransformer):
         self.generator = generator
         self.name_to_node = {}
         self.nodes_to_insert = []
+        # TODO: cleanup
+        self.str_name_to_node = {}
+        self.str_mapping = {}
 
     def _visit_ImportOrImportFrom(self, node):
         """Shorten imported library names.
@@ -279,27 +282,29 @@ class VariableShortener(ast.NodeTransformer):
         'd = c'
         >>> apply("cached['demiurgic'] = 'palpitation'")
         "cached[c] = 'palpitation'"
+        >>> apply("demiurgic = 'demiurgic'")
+        'e = c'
         """
         # TODO: this is a copy of visit_Name, basically
-        if node.s in self.mapping.values():  # TODO: make more efficient
+        if node.s in self.str_mapping.values():  # TODO: make more efficient
             return node
-        if node.s in self.mapping:
-            node = ast.parse(self.mapping[node.s]).body[0].value
-        elif node.s in self.name_to_node:
+        if node.s in self.str_mapping:
+            node = ast.parse(self.str_mapping[node.s]).body[0].value
+        elif node.s in self.str_name_to_node:
             # TODO: AHAHAH such a mess
             old_s = node.s
-            self.mapping[node.s] = new_variable_name = next(self.generator)
+            self.str_mapping[node.s] = new_variable_name = next(self.generator)
             self.nodes_to_insert.append(ast.parse(f"{new_variable_name} = '{node.s}'").body[0])
-            old_node = self.name_to_node[node.s]
+            old_node = self.str_name_to_node[node.s]
             # TODO: instead of writing all these cases, replace in a second pass?
             if isinstance(old_node.parent, ast.Assign):
-                old_node.parent.value = ast.parse(self.mapping[node.s]).body[0].value
+                old_node.parent.value = ast.parse(self.str_mapping[node.s]).body[0].value
             if isinstance(old_node.parent, ast.Subscript):
-                old_node.parent.slice = ast.parse(self.mapping[node.s]).body[0].value
-            node = ast.parse(self.mapping[node.s]).body[0].value
-            del self.name_to_node[old_s]
+                old_node.parent.slice = ast.parse(self.str_mapping[node.s]).body[0].value
+            node = ast.parse(self.str_mapping[node.s]).body[0].value
+            del self.str_name_to_node[old_s]
         else:
-            self.name_to_node[node.s] = node
+            self.str_name_to_node[node.s] = node
         return node
 
 
