@@ -52,19 +52,11 @@ def variable_name_generator(used: set[str] = []):
         cur += 1
 
 
-def get_root(tree):
-    return next(ast.walk(tree))
-
-
 class ParentSetter(ast.NodeTransformer):
     """Adds parent attribute to each node."""
-    def __init__(self, root):
-        self.root = root
-
     def visit(self, node):
         for child in ast.iter_child_nodes(node):
             child.parent = node
-            child.root = self.root
         return super().visit(node)
 
 
@@ -207,8 +199,7 @@ class VariableShortener(ast.NodeTransformer):
             # 2. store mapping from new variable to old node name in custom_mapping -- this is then passed to define_custom_variables later to put at the top of the file
             old_id = node.id
             self.mapping[node.id] = next(self.generator)
-            import copy
-            self.custom_mapping[self.mapping[node.id]] = copy.copy(node)
+            self.custom_mapping[self.mapping[node.id]] = node.id
             self.name_to_node[node.id].id = node.id = self.mapping[node.id]
             del self.name_to_node[old_id]
         else:
@@ -218,12 +209,13 @@ class VariableShortener(ast.NodeTransformer):
 
 def define_custom_variables(tree, mapping):
     root = next(ast.walk(tree))
-    for name, node in mapping.items():
+    for name, value in mapping.items():
         root.body.insert(0, ast.copy_location(ast.Assign(
             targets=[ast.Name(id=name, ctx=ast.Store())],
-            value=node,
+            value=ast.parse(value).body[0].value,
             lineno=0,
         ), root))
+
 
 class WhitespaceRemover(ast.NodeTransformer):
     """Remove all whitespace.
