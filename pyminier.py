@@ -93,18 +93,6 @@ class CommentRemover(ast.NodeTransformer):
         return node
 
 
-class VariableRenamer(ast.NodeTransformer):
-    """Renames variables according to provided mapping."""
-    def __init__(self, generator=variable_name_generator(), mapping=None):
-        self.mapping = mapping or {}
-        self.generator = generator
-
-    def visit_Name(self, node):
-        if node.id in self.mapping:
-            node.id = self.mapping[node.id]
-        return node
-
-
 class VariableNameCollector(ast.NodeVisitor):
     """Collects all variable names in scope."""
     def __init__(self):
@@ -114,49 +102,66 @@ class VariableNameCollector(ast.NodeVisitor):
         self.names.add(node.id)
 
 
-class ImportShortener(VariableRenamer):
-    """Shorten imported library names.
-    
-    >>> g = variable_name_generator()
-    >>> apply = lambda src: ast.unparse(ImportShortener(g).visit(ast.parse(src)))
-    >>> apply('import demiurgic')
-    'import demiurgic as a'
-    >>> apply('from demiurgic import palpitation')
-    'from demiurgic import palpitation as b'
-    >>> print(apply('import demiurgic;demiurgic.palpitation()'))
-    import demiurgic as c
-    c.palpitation()
-    >>> print(apply('import demiurgic as dei;dei.palpitation()'))
-    import demiurgic as d
-    d.palpitation()
-    """
+class VariableShortener(ast.NodeTransformer):
+    """Renames variables according to provided mapping."""
+    def __init__(self, generator=variable_name_generator(), mapping=None):
+        self.mapping = mapping or {}
+        self.generator = generator
+
     def _visit_ImportOrImportFrom(self, node):
+        """Shorten imported library names.
+    
+        >>> g = variable_name_generator()
+        >>> apply = lambda src: ast.unparse(ImportShortener(g).visit(ast.parse(src)))
+        >>> apply('import demiurgic')
+        'import demiurgic as a'
+        >>> apply('from demiurgic import palpitation')
+        'from demiurgic import palpitation as b'
+        >>> print(apply('import demiurgic;demiurgic.palpitation()'))
+        import demiurgic as c
+        c.palpitation()
+        >>> print(apply('import demiurgic as dei;dei.palpitation()'))
+        import demiurgic as d
+        d.palpitation()
+        """
         for alias in node.names:
             old = alias.asname or alias.name
             self.mapping[old] = alias.asname = next(self.generator)
-        return node
+        return self.generic_visit(node)
 
     visit_Import = _visit_ImportOrImportFrom
     visit_ImportFrom = _visit_ImportOrImportFrom
 
-
-class ClassOrFunctionShortener(VariableRenamer):
-    """Shorten class names.
-    
-    >>> shortener = ClassOrFunctionShortener(variable_name_generator())
-    >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
-    >>> apply('class Demiurgic: pass\\nx = Demiurgic()')
-    'class a:\\n    pass\\nx = a()'
-    >>> apply('def demiurgic(): pass\\nx = demiurgic()')
-    'def b():\\n    pass\\nx = b()'
-    """
     def _visit_ClassOrFunctionDef(self, node):
+        """Shorten class names.
+    
+        >>> shortener = ClassOrFunctionShortener(variable_name_generator())
+        >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
+        >>> apply('class Demiurgic: pass\\nx = Demiurgic()')
+        'class a:\\n    pass\\nx = a()'
+        >>> apply('def demiurgic(): pass\\nx = demiurgic()')
+        'def b():\\n    pass\\nx = b()'
+        """
         self.mapping[node.name] = node.name = next(self.generator)
-        return node
+        return self.generic_visit(node)
 
     visit_ClassDef = _visit_ClassOrFunctionDef
     visit_FunctionDef = _visit_ClassOrFunctionDef
     visit_AsyncFunctionDef = _visit_ClassOrFunctionDef
+    
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Attribute):
+            if node.func.attr in self.mapping:
+                node.func.attr = self.mapping[node.func.attr]
+        else:
+            if node.func.id in self.mapping:
+                node.func.id = self.mapping[node.func.id]
+        return self.generic_visit(node)
+
+    def visit_Name(self, node):
+        if node.id in self.mapping:
+            node.id = self.mapping[node.id]
+        return self.generic_visit(node)
 
 
 class WhitespaceRemover(ast.NodeTransformer):
@@ -368,8 +373,7 @@ def main():
     collector = VariableNameCollector()
     collector.visit(tree)
     generator = variable_name_generator(collector.names)
-    ImportShortener(generator).visit(tree)
-    ClassOrFunctionShortener(generator).visit(tree)
+    VariableShortener(generator).visit(tree)
 
     string = ast.unparse(tree)
     string = WhitespaceRemover().handle(string)
