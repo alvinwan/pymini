@@ -52,7 +52,7 @@ def variable_name_generator(used: set[str] = []):
         cur += 1
 
 
-def root(tree):
+def get_root(tree):
     return next(ast.walk(tree))
 
 
@@ -427,7 +427,7 @@ def main():
         tree = ast.parse(f.read())
 
     # minify
-    ParentSetter(root(tree)).visit(tree)
+    ParentSetter(get_root(tree)).visit(tree)
     CommentRemover().visit(tree)
 
     # obfuscate
