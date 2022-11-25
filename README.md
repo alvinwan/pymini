@@ -27,7 +27,7 @@ pip install mnfy  # if you're running python3.4
 pip install uglipy  # ours
 ```
 
-Then, run the following to get mini'd versions of the sample file.
+Then, run the following to get mini'd versions of the sample file `sample/test.py`, which comes from `pyminifer`'s repository.
 
 ```
 mkdir -p out
@@ -46,4 +46,12 @@ total 24
 -rw-r--r--  1 alvinwan  staff   490B Nov 25 01:18 pyminify.py
 ```
 
-By comparison, the original file size was 1355B; `uglipy` achieves the smallest file size, 15% smaller than `pyminify` and 30% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 64% to 69%.
+By comparison, the original file size was 1355B; `uglipy` achieves the smallest file size, 15% smaller than `pyminify` and 30% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 64% to 69%. We can also test against `test2.py`, which comes from `pyminify`'s repository.
+
+```
+-rw-r--r--  1 alvinwan  staff   937B Nov 25 02:09 pyminiest.py
+-rw-r--r--  1 alvinwan  staff   1.4K Nov 25 01:32 pyminifier.py
+-rw-r--r--  1 alvinwan  staff   977B Nov 25 01:32 pyminify.py
+```
+
+By comparison, the original file size was 1990B. `uglipy`'s file size is 4% smaller than `pyminify` and 34% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 51% to 53%.
