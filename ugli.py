@@ -409,8 +409,16 @@ class WhitespaceRemover(ast.NodeTransformer):
     def make_one_liners(self, segments: List) -> List:
         """Make one-liners from no-colon segments."""
         for segment in segments:
-            if not any(line.strip().endswith(':') for line in segment['lines']):
-                segment['lines'] = [';'.join(segment['lines'])]
+            # combine any colon-less lines
+            lines = []
+            for line in segment['lines']:
+                if line.strip().endswith(':'):
+                    lines.append(line)
+                elif lines:
+                    lines[-1] += ';' + line
+                else:
+                    lines.append(line)
+            segment['lines'] = lines
         return segments
 
     def merge_one_liners(self, segments: List) -> List:
