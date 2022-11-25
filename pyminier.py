@@ -154,6 +154,7 @@ class WhitespaceRemover(ast.NodeTransformer):
     ...     x += 1
     ...     return x ** 2
     ... ''')  # combines lines + merges with def line
+    'def square(x):x += 1;return x ** 2'
     """
     def handle(self, source: str):
         # remove blank lines
@@ -258,9 +259,37 @@ class WhitespaceRemover(ast.NodeTransformer):
         return segments
 
     def merge_one_liners(self, segments: List) -> List:
-        """Merge one-liners with previous segment, if the previous ends in a colon."""
-        # TODO
-        return segments
+        """Merge one-liners with previous segment, if the previous ends in a colon.
+        
+        >>> def apply(src):
+        ...     remover = WhitespaceRemover()
+        ...     segments = remover.segments_from_source(src)
+        ...     segments = remover.merge_one_liners(segments)
+        ...     return remover.source_from_segments(segments)
+        ...
+        >>> print(apply('''def square(x):
+        ...     return x ** 2'''))
+        def square(x):return x ** 2
+        >>> print(apply('''for i in range(10):
+        ...     if x == 5:
+        ...         print(x)
+        ...     if x == 6:
+        ...       print(x)'''))
+        for i in range(10):
+            if x == 5:print(x)
+            if x == 6:print(x)
+        """
+        new_segments = []
+        i = 0
+        while i < len(segments):
+            if segments[i]['lines'][-1].strip().endswith(':') and len(segments[i+1]['lines']) == 1 and not segments[i+1]['lines'][0].endswith(':'):
+                segments[i]['lines'][-1] = segments[i]['lines'][-1] + segments[i+1]['lines'][0]
+                new_segments.append(segments[i])
+                i += 1
+            else:
+                new_segments.append(segments[i])
+            i += 1
+        return new_segments
 
     def source_from_segments(self, segments: List) -> str:
         return '\n'.join(
