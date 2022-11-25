@@ -93,10 +93,23 @@ def variable_name_generator(used: set[str] = []):
 
 
 class ParentSetter(ast.NodeTransformer):
-    """Adds parent attribute to each node."""
+    """Adds parent attribute to each node.
+    
+    >>> def apply(src):
+    ...     tree = ast.parse(src)
+    ...     ParentSetter().visit(tree)
+    ...     return tree
+    ...
+    >>> tree = apply("lorem = 'demiurgic'\\nipsum = 'demiurgic'")
+    >>> isinstance(tree.body[0].parent, ast.Module)
+    True
+    >>> isinstance(tree.body[0].value.parent, ast.Assign)
+    True
+    """
     def visit(self, node):
         for child in ast.iter_child_nodes(node):
             child.parent = node
+            self.visit(child)
         return super().visit(node)
 
 
@@ -251,7 +264,22 @@ class VariableShortener(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Str(self, node):
-        """Shorten string literals that are repeated."""
+        """Shorten string literals that are repeated.
+        
+        >>> shortener = VariableShortener(variable_name_generator())
+        >>> def apply(src):
+        ...     tree = ast.parse(src)
+        ...     ParentSetter().visit(tree)
+        ...     shortener.visit(tree)
+        ...     return ast.unparse(tree)
+        ...
+        >>> apply("lorem = 'demiurgic'\\nipsum = 'demiurgic'")
+        'a = c\\nb = c'
+        >>> apply("dolor = 'demiurgic'")
+        'd = c'
+        >>> apply("cached['demiurgic'] = 'palpitation'")
+        "cached[c] = 'palpitation'"
+        """
         # TODO: this is a copy of visit_Name, basically
         if node.s in self.mapping.values():  # TODO: make more efficient
             return node
@@ -262,14 +290,12 @@ class VariableShortener(ast.NodeTransformer):
             old_s = node.s
             self.mapping[node.s] = new_variable_name = next(self.generator)
             self.nodes_to_insert.append(ast.parse(f"{new_variable_name} = '{node.s}'").body[0])
-            try:
-                # TODO: what if not slice?
-                self.name_to_node[node.s].parent.body[0] = ast.parse(self.mapping[node.s]).body[0].value
-            except:
-                try:
-                    self.name_to_node[node.s].parent.slice = ast.parse(self.mapping[node.s]).body[0].value
-                except:
-                    pass
+            old_node = self.name_to_node[node.s]
+            # TODO: instead of writing all these cases, replace in a second pass?
+            if isinstance(old_node.parent, ast.Assign):
+                old_node.parent.value = ast.parse(self.mapping[node.s]).body[0].value
+            if isinstance(old_node.parent, ast.Subscript):
+                old_node.parent.slice = ast.parse(self.mapping[node.s]).body[0].value
             node = ast.parse(self.mapping[node.s]).body[0].value
             del self.name_to_node[old_s]
         else:
