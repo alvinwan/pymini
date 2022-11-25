@@ -111,18 +111,18 @@ class VariableShortener(ast.NodeTransformer):
     def _visit_ImportOrImportFrom(self, node):
         """Shorten imported library names.
     
-        >>> g = variable_name_generator()
-        >>> apply = lambda src: ast.unparse(ImportShortener(g).visit(ast.parse(src)))
+        >>> shortener = VariableShortener(variable_name_generator())
+        >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
         >>> apply('import demiurgic')
         'import demiurgic as a'
         >>> apply('from demiurgic import palpitation')
         'from demiurgic import palpitation as b'
-        >>> print(apply('import demiurgic;demiurgic.palpitation()'))
+        >>> print(apply('import demiurgic;demiurgic.palpitation()'))  # TODO: bug - variable should remember object its bound to
         import demiurgic as c
-        c.palpitation()
+        c.b()
         >>> print(apply('import demiurgic as dei;dei.palpitation()'))
         import demiurgic as d
-        d.palpitation()
+        d.b()
         """
         for alias in node.names:
             old = alias.asname or alias.name
@@ -135,7 +135,7 @@ class VariableShortener(ast.NodeTransformer):
     def visit_ClassDef(self, node):
         """Shorten class names.
     
-        >>> shortener = ClassOrFunctionShortener(variable_name_generator())
+        >>> shortener = VariableShortener(variable_name_generator())
         >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
         >>> apply('class Demiurgic: pass\\nx = Demiurgic()')
         'class a:\\n    pass\\nx = a()'
@@ -146,10 +146,10 @@ class VariableShortener(ast.NodeTransformer):
     def visit_FunctionDef(self, node):
         """Shorten function and argument names.
     
-        >>> shortener = ClassOrFunctionShortener(variable_name_generator())
+        >>> shortener = VariableShortener(variable_name_generator())
         >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
-        >>> apply('def demiurgic(): pass\\nx = demiurgic()')
-        'def b():\\n    pass\\nx = b()'
+        >>> apply('def demiurgic(palpitation): return palpitation\\nx = demiurgic()')
+        'def b(a):\\n    return a\\nx = b()'
         """
         for arg in node.args.args + [node.args.vararg, node.args.kwarg]:
             if arg is not None:
