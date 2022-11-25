@@ -132,32 +132,6 @@ class ImportShortener(VariableRenamer):
     visit_ImportFrom = _visit_ImportOrImportFrom
 
 
-def segment_by_indentation(source: str) -> List[Dict]:
-    """Segment provided source code by indentation level.
-
-    >>> segment_by_indentation('''
-    ... def square(x):
-    ...     return x ** 2
-    ... ''')
-    [{'indents': 0, 'lines': ['', 'def square(x):']}, {'indents': 4, 'lines': ['return x ** 2']}]
-    """
-    segments = []
-    segment = None
-    for line in source.splitlines():
-        indents = len(line) - len(line.lstrip())
-        line = line.lstrip()
-        if segment is None:
-            segment = {'indents': indents, 'lines': [line]}
-        elif indents != segment['indents']:
-            segments.append(segment)
-            segment = {'indents': indents, 'lines': [line]}
-        else:
-            segment['lines'].append(line)
-    if segment:
-        segments.append(segment)
-    return segments
-
-
 class WhitespaceRemover(ast.NodeTransformer):
     """Remove all whitespace.
 
@@ -165,7 +139,7 @@ class WhitespaceRemover(ast.NodeTransformer):
     - removes blank lines
     - removes trailing whitespace
     - create 1-liners from no-colon segments
-    - TODO: use 1-space indentation
+    - use 1-space indentation
     - TODO: merge 1-liners with previous colon-suffixed segment
     
     >>> apply = lambda src: WhitespaceRemover().handle(src)
@@ -189,14 +163,16 @@ class WhitespaceRemover(ast.NodeTransformer):
         source = '\n'.join(line.rstrip() for line in source.splitlines())
 
         # segment file by indentation
-        segments = segment_by_indentation(source)
+        segments = self.segments_from_source(source)
 
-        # for any segment without a colon, merge into one line
-        for segment in segments:
-            if not any(line.strip().endswith(':') for line in segment['lines']):
-                segment['lines'] = [';'.join(segment['lines'])]
+        # reduce indentation to one space
+        segments = self.reduce_indentation(segments)
 
-        # TODO: merge one-liners with previous segment, if the previous ends in a colon
+        # make into one-liners where possible
+        segments = self.make_one_liners(segments)
+
+        # merge one-liners with predicates
+        segments = self.merge_one_liners(segments)
 
         # regenerate source, where indents use only 1 space
         source = '\n'.join(
@@ -205,6 +181,92 @@ class WhitespaceRemover(ast.NodeTransformer):
         )
         
         return source
+
+    def segments_from_source(self, source: str) -> List[Dict]:
+        """Segment provided source code by indentation level.
+
+        >>> WhitespaceRemover().segments_from_source('''
+        ... def square(x):
+        ...     return x ** 2
+        ... ''')
+        [{'indents': 0, 'lines': ['', 'def square(x):']}, {'indents': 4, 'lines': ['return x ** 2']}]
+        """
+        segments = []
+        segment = None
+        for line in source.splitlines():
+            indents = len(line) - len(line.lstrip())
+            line = line.lstrip()
+            if segment is None:
+                segment = {'indents': indents, 'lines': [line]}
+            elif indents != segment['indents']:
+                segments.append(segment)
+                segment = {'indents': indents, 'lines': [line]}
+            else:
+                segment['lines'].append(line)
+        if segment:
+            segments.append(segment)
+        return segments
+
+    def reduce_indentation(self, segments: List) -> List:
+        """Reduce indentation to 1 space.
+        
+        >>> def apply(src):
+        ...     remover = WhitespaceRemover()
+        ...     segments = remover.segments_from_source(src)
+        ...     segments = remover.reduce_indentation(segments)
+        ...     return remover.source_from_segments(segments)
+        ...
+        >>> print(apply('''def square(x):
+        ...     return x ** 2'''))
+        def square(x):
+         return x ** 2
+        >>> print(apply('''for i in range(10):
+        ...     if x == 5:
+        ...         print(x)
+        ...     if x == 6:
+        ...       print(x)'''))
+        for i in range(10):
+         if x == 5:
+          print(x)
+         if x == 6:
+          print(x)
+        """
+        def update_valley(valley, indents):
+            new_to_old = list(sorted(indents))
+            for segment in valley:
+                segment['indents'] = new_to_old.index(segment['indents'])
+
+        indents = set()
+        valley = []
+        for segment in segments:
+            if segment['indents'] in indents: # we've gone back up a level
+                update_valley(valley, indents)
+                valley = [segment]
+                if segment['indents'] != max(indents):
+                    indents.remove(max(indents))
+                continue
+            valley.append(segment)
+            indents.add(segment['indents'])
+        update_valley(valley, indents)
+        return segments
+
+    def make_one_liners(self, segments: List) -> List:
+        """Make one-liners from no-colon segments."""
+        for segment in segments:
+            if not any(line.strip().endswith(':') for line in segment['lines']):
+                segment['lines'] = [';'.join(segment['lines'])]
+        return segments
+
+    def merge_one_liners(self, segments: List) -> List:
+        """Merge one-liners with previous segment, if the previous ends in a colon."""
+        # TODO
+        return segments
+
+    def source_from_segments(self, segments: List) -> str:
+        return '\n'.join(
+            '\n'.join([' ' * segment['indents'] + line for line in segment['lines']])
+            for segment in segments
+        )
 
 
 def main():
