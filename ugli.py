@@ -246,6 +246,32 @@ class VariableShortener(ast.NodeTransformer):
             self.name_to_node[node.id] = node
         return self.generic_visit(node)
 
+    def visit_Str(self, node):
+        """Shorten string literals that are repeated."""
+        # TODO: this is a copy of visit_Name, basically
+        if node.s in self.mapping.values():  # TODO: make more efficient
+            return node
+        if node.s in self.mapping:
+            node = ast.parse(self.mapping[node.s]).body[0].value
+        elif node.s in self.name_to_node:
+            # TODO: AHAHAH such a mess
+            old_s = node.s
+            self.mapping[node.s] = next(self.generator)
+            self.custom_mapping[self.mapping[node.s]] = replacement = ast.parse(f"'{node.s}'")
+            try:
+                # TODO: what if not slice?
+                self.name_to_node[node.s].parent.body[0] = ast.parse(self.mapping[node.s]).body[0].value
+            except:
+                try:
+                    self.name_to_node[node.s].parent.slice = ast.parse(self.mapping[node.s]).body[0].value
+                except:
+                    pass
+            node = ast.parse(self.mapping[node.s]).body[0].value
+            del self.name_to_node[old_s]
+        else:
+            self.name_to_node[node.s] = node
+        return node
+
 
 def define_custom_variables(tree, mapping):
     root = next(ast.walk(tree))
@@ -443,7 +469,7 @@ class WhitespaceRemover(ast.NodeTransformer):
             last_token = None
             for token in tokenize.generate_tokens(StringIO(line).readline):
                 token = token.string
-                if token in keyword.kwlist and tokens and last_token not in ':;=':
+                if token in keyword.kwlist and tokens and not any(last_token.endswith(c) for c in ':;= '):
                     tokens.append(token)
                 elif tokens and (last_token not in keyword.kwlist or token in ':;='):
                     tokens[-1] += token
