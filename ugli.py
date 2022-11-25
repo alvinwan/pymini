@@ -148,7 +148,7 @@ class VariableShortener(ast.NodeTransformer):
         self.mapping = mapping or {}
         self.generator = generator
         self.name_to_node = {}
-        self.custom_mapping = {}
+        self.nodes_to_insert = []
 
     def _visit_ImportOrImportFrom(self, node):
         """Shorten imported library names.
@@ -238,8 +238,11 @@ class VariableShortener(ast.NodeTransformer):
             # 1. if a variable is used more than once, shorten it
             # 2. store mapping from new variable to old node name in custom_mapping -- this is then passed to define_custom_variables later to put at the top of the file
             old_id = node.id
-            self.mapping[node.id] = next(self.generator)
-            self.custom_mapping[self.mapping[node.id]] = node.id
+            self.mapping[node.id] = new_variable_name = next(self.generator)
+            self.nodes_to_insert.append(ast.Assign(
+                targets=[ast.Name(id=new_variable_name, ctx=ast.Store())],
+                value=ast.parse(old_id).body[0].value,
+            ))
             self.name_to_node[node.id].id = node.id = self.mapping[node.id]
             del self.name_to_node[old_id]
         else:
@@ -256,8 +259,11 @@ class VariableShortener(ast.NodeTransformer):
         elif node.s in self.name_to_node:
             # TODO: AHAHAH such a mess
             old_s = node.s
-            self.mapping[node.s] = next(self.generator)
-            self.custom_mapping[self.mapping[node.s]] = replacement = ast.parse(f"'{node.s}'")
+            self.mapping[node.s] = new_variable_name = next(self.generator)
+            self.nodes_to_insert.append(ast.Assign(
+                targets=[ast.Name(id=new_variable_name, ctx=ast.Store())],
+                value=ast.parse(f"'{node.s}'").body[0].value,
+            ))
             try:
                 # TODO: what if not slice?
                 self.name_to_node[node.s].parent.body[0] = ast.parse(self.mapping[node.s]).body[0].value
@@ -275,12 +281,9 @@ class VariableShortener(ast.NodeTransformer):
 
 def define_custom_variables(tree, mapping):
     root = next(ast.walk(tree))
-    for name, value in mapping.items():
-        root.body.insert(0, ast.copy_location(ast.Assign(
-            targets=[ast.Name(id=name, ctx=ast.Store())],
-            value=ast.parse(value).body[0].value,
-            lineno=0,
-        ), root))
+    for node in mapping:
+        root.body.insert(0, ast.copy_location(node, root))
+    ast.fix_missing_locations(tree)
 
 
 class WhitespaceRemover(ast.NodeTransformer):
@@ -507,7 +510,7 @@ def main():
     generator = variable_name_generator(collector.names)
     shortener = VariableShortener(generator)
     shortener.visit(tree)
-    define_custom_variables(tree, shortener.custom_mapping)
+    define_custom_variables(tree, shortener.nodes_to_insert)
 
     string = ast.unparse(tree)
     string = WhitespaceRemover().handle(string)
