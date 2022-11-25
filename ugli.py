@@ -237,14 +237,11 @@ class VariableShortener(ast.NodeTransformer):
             # TODO: cleanup - this is a mess. basically, this does a few things:
             # 1. if a variable is used more than once, shorten it
             # 2. store mapping from new variable to old node name in custom_mapping -- this is then passed to define_custom_variables later to put at the top of the file
-            old_id = node.id
+            old_variable_name = node.id
             self.mapping[node.id] = new_variable_name = next(self.generator)
-            self.nodes_to_insert.append(ast.Assign(
-                targets=[ast.Name(id=new_variable_name, ctx=ast.Store())],
-                value=ast.parse(old_id).body[0].value,
-            ))
-            self.name_to_node[node.id].id = node.id = self.mapping[node.id]
-            del self.name_to_node[old_id]
+            self.nodes_to_insert.append(ast.parse(f'{new_variable_name} = {old_variable_name}').body[0])
+            self.name_to_node[old_variable_name].id = node.id = self.mapping[old_variable_name]
+            del self.name_to_node[old_variable_name]
         else:
             self.name_to_node[node.id] = node
         return self.generic_visit(node)
@@ -260,10 +257,7 @@ class VariableShortener(ast.NodeTransformer):
             # TODO: AHAHAH such a mess
             old_s = node.s
             self.mapping[node.s] = new_variable_name = next(self.generator)
-            self.nodes_to_insert.append(ast.Assign(
-                targets=[ast.Name(id=new_variable_name, ctx=ast.Store())],
-                value=ast.parse(f"'{node.s}'").body[0].value,
-            ))
+            self.nodes_to_insert.append(ast.parse(f"{new_variable_name} = '{node.s}'").body[0])
             try:
                 # TODO: what if not slice?
                 self.name_to_node[node.s].parent.body[0] = ast.parse(self.mapping[node.s]).body[0].value
