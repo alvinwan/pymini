@@ -52,11 +52,19 @@ def variable_name_generator(used: set[str] = []):
         cur += 1
 
 
+def root(tree):
+    return next(ast.walk(tree))
+
+
 class ParentSetter(ast.NodeTransformer):
     """Adds parent attribute to each node."""
+    def __init__(self, root):
+        self.root = root
+
     def visit(self, node):
         for child in ast.iter_child_nodes(node):
             child.parent = node
+            child.root = self.root
         return super().visit(node)
 
 
@@ -104,9 +112,11 @@ class VariableNameCollector(ast.NodeVisitor):
 
 class VariableShortener(ast.NodeTransformer):
     """Renames variables according to provided mapping."""
-    def __init__(self, generator=variable_name_generator(), mapping=None):
+    def __init__(self, generator=variable_name_generator(), root=None, mapping=None):
         self.mapping = mapping or {}
         self.generator = generator
+        self.name_to_node = {}
+        self.custom_mapping = {}
 
     def _visit_ImportOrImportFrom(self, node):
         """Shorten imported library names.
@@ -183,11 +193,37 @@ class VariableShortener(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Name(self, node):
-        """Apply renamed variables."""
+        """Apply renamed variables.
+        
+        Additionally, if any variable is used more than once, shorten it.
+        """
+        if node.id in self.mapping.values():  # TODO: make more efficient
+            return node
         if node.id in self.mapping:
             node.id = self.mapping[node.id]
+        elif node.id in self.name_to_node:
+            # TODO: cleanup - this is a mess. basically, this does a few things:
+            # 1. if a variable is used more than once, shorten it
+            # 2. store mapping from new variable to old node name in custom_mapping -- this is then passed to define_custom_variables later to put at the top of the file
+            old_id = node.id
+            self.mapping[node.id] = next(self.generator)
+            import copy
+            self.custom_mapping[self.mapping[node.id]] = copy.copy(node)
+            self.name_to_node[node.id].id = node.id = self.mapping[node.id]
+            del self.name_to_node[old_id]
+        else:
+            self.name_to_node[node.id] = node
         return self.generic_visit(node)
 
+
+def define_custom_variables(tree, mapping):
+    root = next(ast.walk(tree))
+    for name, node in mapping.items():
+        root.body.insert(0, ast.copy_location(ast.Assign(
+            targets=[ast.Name(id=name, ctx=ast.Store())],
+            value=node,
+            lineno=0,
+        ), root))
 
 class WhitespaceRemover(ast.NodeTransformer):
     """Remove all whitespace.
@@ -391,14 +427,16 @@ def main():
         tree = ast.parse(f.read())
 
     # minify
-    ParentSetter().visit(tree)
+    ParentSetter(root(tree)).visit(tree)
     CommentRemover().visit(tree)
 
     # obfuscate
     collector = VariableNameCollector()
     collector.visit(tree)
     generator = variable_name_generator(collector.names)
-    VariableShortener(generator).visit(tree)
+    shortener = VariableShortener(generator)
+    shortener.visit(tree)
+    define_custom_variables(tree, shortener.custom_mapping)
 
     string = ast.unparse(tree)
     string = WhitespaceRemover().handle(string)
