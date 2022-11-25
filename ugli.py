@@ -1,6 +1,7 @@
 import ast
 import keyword
 from typing import Dict, List
+import sys
 
 
 class ReturnSimplifier(ast.NodeTransformer):
@@ -454,7 +455,7 @@ class WhitespaceRemover(ast.NodeTransformer):
 
 
 def main():
-    with open('tests/test.py') as f:
+    with open(sys.argv[1]) as f:
         tree = ast.parse(f.read())
 
     # simplify
@@ -477,8 +478,7 @@ def main():
     string = ast.unparse(tree)
     string = WhitespaceRemover().handle(string)
 
-    with open('tests/ours.py', 'w') as f:
-        f.write(string)
+    print(string)
 
 
 if __name__ == '__main__':
