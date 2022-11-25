@@ -1,15 +1,28 @@
-ugli.py
+# ugli.py
+
+Python simplifier, minifier, and obfuscator
+
+## Installation
+
+    pip install ugli
+
+## Usage
+
+    ugli [options] <file>
+
+## Comparison
 
 We run comparisons against the following:
+
 - pyminify - https://github.com/dflook/python-minifier
-- mnfy - https://github.com/brettcannon/mnfy (no longer maintained)
 - pyminifier - https://github.com/liftoff/pyminifier
+- mnfy - https://github.com/brettcannon/mnfy (does not work on Python >3.4)
 
 To repeat our results, run the following to setup.
 
 ```
 pip install python-minifier
-pip install setuptools==57.5.0 && pip install pyminifier
+pip install setuptools==57.5.0 && pip install pyminifier  # hack to get pyminifer to install
 pip install mnfy  # if you're running python3.4
 pip install uglipy  # ours
 ```
