@@ -228,20 +228,24 @@ class VariableShortener(ast.NodeTransformer):
         """Apply renamed variables.
         
         Additionally, if any variable is used more than once, shorten it.
+
+        >>> shortener = VariableShortener(variable_name_generator())
+        >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
+        >>> apply('print(demiurgic)')
+        'print(demiurgic)'
+        >>> apply('demiurgic = 1\\nholy = demiurgic\\necho(demiurgic)')
+        'a = 1\\nb = a\\necho(a)'
+        >>> apply('print(demiurgic, demiurgic)')  # now print has been seen 2x
+        'c(a, a)'
         """
         if node.id in self.mapping.values():  # TODO: make more efficient
             return node
         if node.id in self.mapping:
             node.id = self.mapping[node.id]
         elif node.id in self.name_to_node:
-            # TODO: cleanup - this is a mess. basically, this does a few things:
-            # 1. if a variable is used more than once, shorten it
-            # 2. store mapping from new variable to old node name in custom_mapping -- this is then passed to define_custom_variables later to put at the top of the file
-            old_variable_name = node.id
             self.mapping[node.id] = new_variable_name = next(self.generator)
-            self.nodes_to_insert.append(ast.parse(f'{new_variable_name} = {old_variable_name}').body[0])
-            self.name_to_node[old_variable_name].id = node.id = self.mapping[old_variable_name]
-            del self.name_to_node[old_variable_name]
+            self.nodes_to_insert.append(ast.parse(f'{new_variable_name} = {node.id}').body[0])
+            self.name_to_node.pop(node.id).id = node.id = new_variable_name
         else:
             self.name_to_node[node.id] = node
         return self.generic_visit(node)
