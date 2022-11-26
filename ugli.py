@@ -561,5 +561,6 @@ def main():
         with open(path.with_stem(path.stem + '.ugli'), 'w') as f:
             f.write(uglified)
 
+
 if __name__ == '__main__':
     main()
