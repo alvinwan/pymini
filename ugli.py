@@ -525,6 +525,16 @@ class WhitespaceRemover(ast.NodeTransformer):
 
 
 def uglipy(sources, filenames=None):
+    """Uglify source code. Simplify, minify, and obfuscate.
+
+    >>> uglipy(['''a = 3
+    ... def square(x):
+    ...     return x ** 2
+    ... ''', '''def square(x):
+    ...     return x ** 2
+    ... '''])[0]
+    ['b=3\\ndef d(c):return c**2', 'def f(e):return e**2']
+    """
     if isinstance(sources, str):
         sources = [sources]
 
@@ -535,18 +545,21 @@ def uglipy(sources, filenames=None):
 
         # simplify
         simplifier = ReturnSimplifier()
-        simplifier.visit(tree)
+        simplifier.visit(tree)  # TODO: use location or something as well as names? say we did `x = f(x); x = f(x); return x`. this would be wrong
         CleanupUnusedNames(simplifier.unused_names).visit(tree)
 
         # minify
         ParentSetter().visit(tree)
         CommentRemover().visit(tree)
 
-        # obfuscate
-        collector = VariableNameCollector()
+    # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
+    collector = VariableNameCollector()
+    for tree in trees:
         collector.visit(tree)
-        generator = variable_name_generator(collector.names)
-        shortener = VariableShortener(generator)
+
+    generator = variable_name_generator(collector.names)  # create one global shortener / generator TODO: also naive
+    for tree in trees:
+        shortener = VariableShortener(generator)  # TODO: fuse with other shorteners based on imports
         shortener.visit(tree)
         define_custom_variables(tree, shortener.nodes_to_insert)
 
