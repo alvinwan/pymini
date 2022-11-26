@@ -524,42 +524,51 @@ class WhitespaceRemover(ast.NodeTransformer):
         return '\n'.join(lines)
 
 
-def uglipy(source):
-    tree = ast.parse(source)
+def uglipy(sources, filenames=None):
+    if isinstance(sources, str):
+        sources = [sources]
 
-    # simplify
-    simplifier = ReturnSimplifier()
-    simplifier.visit(tree)
-    CleanupUnusedNames(simplifier.unused_names).visit(tree)
+    trees = [ast.parse(source) for source in sources]
+    cleaned = []
 
-    # minify
-    ParentSetter().visit(tree)
-    CommentRemover().visit(tree)
+    for tree in trees:
 
-    # obfuscate
-    collector = VariableNameCollector()
-    collector.visit(tree)
-    generator = variable_name_generator(collector.names)
-    shortener = VariableShortener(generator)
-    shortener.visit(tree)
-    define_custom_variables(tree, shortener.nodes_to_insert)
+        # simplify
+        simplifier = ReturnSimplifier()
+        simplifier.visit(tree)
+        CleanupUnusedNames(simplifier.unused_names).visit(tree)
 
-    string = ast.unparse(tree)
-    string = WhitespaceRemover().handle(string)
+        # minify
+        ParentSetter().visit(tree)
+        CommentRemover().visit(tree)
 
-    return string
+        # obfuscate
+        collector = VariableNameCollector()
+        collector.visit(tree)
+        generator = variable_name_generator(collector.names)
+        shortener = VariableShortener(generator)
+        shortener.visit(tree)
+        define_custom_variables(tree, shortener.nodes_to_insert)
+
+        string = ast.unparse(tree)
+        string = WhitespaceRemover().handle(string)
+        cleaned.append(string)
+
+    return cleaned, filenames
 
 
 def main():
+    sources, filenames = [], []
     for path in glob.iglob(sys.argv[1]):
         if not path.endswith('.py') or '.ugli.' in path:
             continue
         with open(path) as f:
-            source = f.read()
-        uglified = uglipy(source)
-        path = Path(path)
-        with open(path.with_stem(path.stem + '.ugli'), 'w') as f:
-            f.write(uglified)
+            sources.append(f.read())
+        filenames.append(Path(path).stem)
+    cleaned, filenames = uglipy(sources, filenames)
+    for source, filename in zip(cleaned, filenames):
+        with open(f'out/{filename}.ugli.py', 'w') as f:
+            f.write(source)
 
 
 if __name__ == '__main__':
