@@ -1,6 +1,6 @@
 # ugli.py
 
-Python simplifier, minifier, and obfuscator
+Python simplifier, minifier, and obfuscator. Built to operate on entire libraries, persisting and supporting obfuscation across files.
 
 ## Installation
 
@@ -41,17 +41,17 @@ Then, run `ls -lh out`. You should see the following.
 
 ```
 total 24
--rw-r--r--  1 alvinwan  staff   418B Nov 25 01:22 pyminiest.py
+-rw-r--r--  1 alvinwan  staff   415B Nov 25 01:22 pyminiest.py
 -rw-r--r--  1 alvinwan  staff   602B Nov 25 01:19 pyminifier.py
 -rw-r--r--  1 alvinwan  staff   490B Nov 25 01:18 pyminify.py
 ```
 
-By comparison, the original file size was 1355B; `uglipy` achieves the smallest file size, 15% smaller than `pyminify` and 30% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 64% to 69%. We can also test against `test2.py`, which comes from `pyminify`'s repository.
+By comparison, the original file size was 1355B; `uglipy` achieves the smallest file size, 16% smaller than `pyminify` and 30% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 64% to 71%. We can also test against `test2.py`, which comes from `pyminify`'s repository.
 
 ```
--rw-r--r--  1 alvinwan  staff   937B Nov 25 02:09 pyminiest.py
+-rw-r--r--  1 alvinwan  staff   924B Nov 25 02:09 pyminiest.py
 -rw-r--r--  1 alvinwan  staff   1.4K Nov 25 01:32 pyminifier.py
 -rw-r--r--  1 alvinwan  staff   977B Nov 25 01:32 pyminify.py
 ```
 
-By comparison, the original file size was 1990B. `uglipy`'s file size is 4% smaller than `pyminify` and 34% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 51% to 53%.
+By comparison, the original file size was 1990B. `uglipy`'s file size is 6% smaller than `pyminify` and 34% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 51% to 54%.

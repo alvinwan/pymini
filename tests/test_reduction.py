@@ -1,5 +1,4 @@
 from ugli import uglipy
-import os
 import pytest
 
 

@@ -2,6 +2,8 @@ import ast
 import keyword
 from typing import Dict, List
 import sys
+import glob
+from pathlib import Path
 
 
 class ReturnSimplifier(ast.NodeTransformer):
@@ -549,9 +551,15 @@ def uglipy(source):
 
 
 def main():
-    with open(sys.argv[1]) as f:
-        print(uglipy(f.read()))
-
+    for path in glob.iglob(sys.argv[1]):
+        if not path.endswith('.py') or '.ugli.' in path:
+            continue
+        with open(path) as f:
+            source = f.read()
+        uglified = uglipy(source)
+        path = Path(path)
+        with open(path.with_stem(path.stem + '.ugli'), 'w') as f:
+            f.write(uglified)
 
 if __name__ == '__main__':
     main()
