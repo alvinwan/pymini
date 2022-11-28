@@ -302,6 +302,9 @@ class VariableShortener(ast.NodeTransformer):
         "cached[c] = 'palpitation'"
         >>> apply("demiurgic = 'demiurgic'")
         'e = c'
+        >>> print(apply("if 'demiurgic' in lorem: print(lorem)"))
+        if c in a:
+            print(a)
         """
         if not isinstance(node.s, str):  # TODO: generic for all constants?
             return node
@@ -311,16 +314,16 @@ class VariableShortener(ast.NodeTransformer):
         if node.s in self.str_mapping:
             node = ast.parse(self.str_mapping[node.s]).body[0].value
         elif node.s in self.str_name_to_node:
-            # TODO: AHAHAH such a mess
             old_s = node.s
             self.str_mapping[node.s] = new_variable_name = next(self.generator)
             self.nodes_to_insert.append(ast.parse(f"{new_variable_name} = '{node.s}'").body[0])
             old_node = self.str_name_to_node[node.s]
             # TODO: instead of writing all these cases, replace in a second pass?
-            if isinstance(old_node.parent, ast.Assign):
-                old_node.parent.value = ast.parse(self.str_mapping[node.s]).body[0].value
-            if isinstance(old_node.parent, ast.Subscript):
-                old_node.parent.slice = ast.parse(self.str_mapping[node.s]).body[0].value
+            if hasattr(old_node, 'parent'):
+                if isinstance(old_node.parent, ast.Assign):
+                    old_node.parent.value = ast.parse(self.str_mapping[node.s]).body[0].value
+                if isinstance(old_node.parent, ast.Subscript):
+                    old_node.parent.slice = ast.parse(self.str_mapping[node.s]).body[0].value
             node = ast.parse(self.str_mapping[node.s]).body[0].value
             del self.str_name_to_node[old_s]
         else:
