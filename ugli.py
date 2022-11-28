@@ -159,7 +159,7 @@ class VariableNameCollector(ast.NodeVisitor):
 
 class VariableShortener(ast.NodeTransformer):
     """Renames variables according to provided mapping."""
-    def __init__(self, generator=variable_name_generator(), mapping=None):
+    def __init__(self, generator, mapping=None, modules=()):
         self.mapping = mapping or {}
         self.generator = generator
         self.name_to_node = {}
@@ -167,11 +167,12 @@ class VariableShortener(ast.NodeTransformer):
         # TODO: cleanup
         self.str_name_to_node = {}
         self.str_mapping = {}
+        self.modules = modules # dont alias variables imported from these modules
 
     def _visit_ImportOrImportFrom(self, node):
         """Shorten imported library names.
     
-        >>> shortener = VariableShortener(variable_name_generator())
+        >>> shortener = VariableShortener(variable_name_generator(), modules=('donotaliasme',))
         >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
         >>> apply('import demiurgic')
         'import demiurgic as a'
@@ -183,10 +184,16 @@ class VariableShortener(ast.NodeTransformer):
         >>> print(apply('import demiurgic as dei;dei.palpitation()'))
         import demiurgic as d
         d.b()
+        >>> print(apply('import demiurgic;import donotaliasme;from donotaliasme import dolor;'))
+        import demiurgic as e
+        import donotaliasme
+        from donotaliasme import dolor
         """
-        for alias in node.names:
-            old = alias.asname or alias.name
-            self.mapping[old] = alias.asname = next(self.generator)
+        if isinstance(node, ast.Import) or node.module not in self.modules:
+            for alias in node.names:
+                if isinstance(node, ast.ImportFrom) or alias.name not in self.modules:
+                    old = alias.asname or alias.name
+                    self.mapping[old] = alias.asname = next(self.generator)
         return self.generic_visit(node)
 
     visit_Import = _visit_ImportOrImportFrom
@@ -315,25 +322,30 @@ class VariableShortener(ast.NodeTransformer):
 class FusedVariableShortener(VariableShortener):
     """Use different module shorteners to adjust variables in this module
     
-    >>> shortener = VariableShortener()
+    >>> generator = variable_name_generator()
+    >>> shortener = VariableShortener(generator)
     >>> ast.unparse(shortener.visit(ast.parse('demiurgic = 1\\nholy = demiurgic')))
     'a = 1\\nb = a'
-    >>> fused = FusedVariableShortener(module_to_shortener={'silly': shortener})
+    >>> fused = FusedVariableShortener(generator, module_to_shortener={'silly': shortener})
     >>> apply = lambda src: ast.unparse(fused.visit(ast.parse(src)))
     >>> apply('from silly import demiurgic, dontreplaceme; print(demiurgic)')
     'from silly import a, dontreplaceme\\nprint(a)'
     """
-    def __init__(self, *args, module_to_shortener={}, **kwargs):
+    def __init__(self, *args, module_to_shortener={}, module_to_module={}, **kwargs):
         super().__init__(*args, **kwargs)
         self.module_to_shortener = module_to_shortener
+        self.module_to_module = module_to_module
 
     def visit_ImportFrom(self, node):
         """Apply shortener for imported module."""
         shortener = self.module_to_shortener.get(node.module, None)
         if shortener is not None:
+            self.mapping.update(shortener.mapping)
             for alias in node.names:
                 if alias.name in shortener.mapping:
                     self.mapping[alias.name] = alias.name = shortener.mapping[alias.name]
+            if node.module in self.module_to_module:  # TODO: handle nested modules
+                node.module = self.module_to_module[node.module]
         return self.generic_visit(node)
 
 
@@ -549,24 +561,28 @@ class WhitespaceRemover(ast.NodeTransformer):
         return '\n'.join(lines)
 
 
-def uglipy(sources, filenames):
+def uglipy(sources, modules):
     """Uglify source code. Simplify, minify, and obfuscate.
 
-    >>> sources = uglipy(['''a = 3
+    >>> sources, modules = uglipy(['''a = 3
     ... def square(x):
     ...     return x ** 2
-    ... ''', '''def square(x):
-    ...     return x ** 2
-    ... '''], ['main', 'side'])[0]
-    >>> len(sources[0]) == len('b=3\\ndef d(c):return c**2')
-    True
-    >>> len(sources[1]) == len('def f(e):return e**2')
-    True
+    ... ''', '''from main import square
+    ... square(3)
+    ... '''], ['main', 'side'])
+    >>> modules
+    ['e', 'f']
+    >>> sources[0]
+    'g=3\\ndef i(h):return h**2'
+    >>> sources[1]
+    'from e import d;d(3)'
     """
-    assert len(sources) == len(filenames)
-
     if isinstance(sources, str):
         sources = [sources]
+    if isinstance(modules, str):
+        modules = [modules]
+
+    assert len(sources) == len(modules)
 
     trees = [ast.parse(source) for source in sources]
     cleaned = []
@@ -588,14 +604,18 @@ def uglipy(sources, filenames):
         collector.visit(tree)
 
     generator = variable_name_generator(collector.names)  # create one global shortener / generator TODO: also naive
-    filename_to_shortener = {filename: VariableShortener(generator) for filename in filenames}
-    for filename, tree in zip(filenames, trees):
-        shortener = filename_to_shortener[filename]
+    module_to_shortener = {module: VariableShortener(generator, modules=modules) for module in modules}
+    for module, tree in zip(modules, trees):
+        shortener = module_to_shortener[module]
         shortener.visit(tree)
         define_custom_variables(tree, shortener.nodes_to_insert)
     
+    # shorten module names # TODO: cleanup
+    module_to_module = {module: next(generator) for module in modules}
+    modules = [module_to_module[module] for module in modules]
+
     # rerun shortening on ea file based on imports from other files
-    fused = FusedVariableShortener(module_to_shortener=filename_to_shortener)
+    fused = FusedVariableShortener(generator, module_to_module=module_to_module, module_to_shortener=module_to_shortener)
     for tree in trees:
         fused.visit(tree)
 
@@ -605,20 +625,20 @@ def uglipy(sources, filenames):
         string = WhitespaceRemover().handle(string)
         cleaned.append(string)
 
-    return cleaned, filenames
+    return cleaned, modules
 
 
 def main():
-    sources, filenames = [], []
+    sources, modules = [], []
     for path in glob.iglob(sys.argv[1]):
         if not path.endswith('.py') or '.ugli.' in path:
             continue
         with open(path) as f:
             sources.append(f.read())
-        filenames.append(Path(path).stem)
-    cleaned, filenames = uglipy(sources, filenames)
-    for source, filename in zip(cleaned, filenames):
-        with open(f'out/{filename}.ugli.py', 'w') as f:
+        modules.append(Path(path).stem)
+    cleaned, modules = uglipy(sources, modules)
+    for source, module in zip(cleaned, modules):
+        with open(f'out/{module}.ugli.py', 'w') as f:
             f.write(source)
 
 
