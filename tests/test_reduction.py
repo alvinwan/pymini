@@ -1,4 +1,5 @@
 from ugli import uglipy
+from pathlib import Path
 import pytest
 
 
@@ -8,4 +9,4 @@ import pytest
 ])
 def test_reduction(path, size):
     with open(path) as f:
-        assert len(uglipy(f.read())) <= size
+        assert len(uglipy(f.read(), Path(path).stem)) <= size
