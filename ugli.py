@@ -158,7 +158,14 @@ class VariableNameCollector(ast.NodeVisitor):
 
 
 class VariableShortener(ast.NodeTransformer):
-    """Renames variables according to provided mapping."""
+    """Renames variables according to provided mapping.
+    
+    >>> shortener = VariableShortener(variable_name_generator(), mapping={'donotrename': 'donotrename'})
+    >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
+    >>> print(apply('mamamia = 1; donotrename = 2;'))
+    a = 1
+    donotrename = 2
+    """
     def __init__(self, generator, mapping=None, modules=()):
         self.mapping = mapping or {}
         self.generator = generator
