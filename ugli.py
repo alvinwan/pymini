@@ -207,7 +207,8 @@ class VariableShortener(ast.NodeTransformer):
         >>> apply('class Demiurgic: pass\\nholy = Demiurgic()')
         'class a:\\n    pass\\nb = a()'
         """
-        self.mapping[node.name] = node.name = next(self.generator)
+        if node.name not in self.mapping.values():  # TODO: make .values() more efficient
+            self.mapping[node.name] = node.name = next(self.generator)
         return self.generic_visit(node)
 
     def visit_FunctionDef(self, node):
@@ -219,9 +220,10 @@ class VariableShortener(ast.NodeTransformer):
         'def b(a):\\n    return a\\nc = b()'
         """
         for arg in node.args.args + [node.args.vararg, node.args.kwarg]:
-            if arg is not None:
+            if arg is not None and arg.arg not in self.mapping.values():  # TODO: make .values() more efficient
                 self.mapping[arg.arg] = arg.arg = next(self.generator)
-        self.mapping[node.name] = node.name = next(self.generator)
+        if node.name not in self.mapping.values():  # TODO: need to dedup this logic
+            self.mapping[node.name] = node.name = next(self.generator)
         return self.generic_visit(node)
 
     visit_AsyncFunctionDef = visit_FunctionDef
@@ -235,7 +237,7 @@ class VariableShortener(ast.NodeTransformer):
         'a = 1\\nb = a'
         """
         for target in node.targets:
-            if isinstance(target, ast.Name):
+            if isinstance(target, ast.Name) and target.id not in self.mapping.values():  # TODO: make .values() more efficient
                 self.mapping[target.id] = target.id = next(self.generator)
         return self.generic_visit(node)
 
@@ -263,7 +265,7 @@ class VariableShortener(ast.NodeTransformer):
         >>> apply('print(demiurgic, demiurgic)')  # now print has been seen 2x
         'c(a, a)'
         """
-        if node.id in self.mapping.values():  # TODO: make more efficient
+        if node.id in self.mapping.values():  # TODO: make .values() more efficient
             return node
         if node.id in self.mapping:
             node.id = self.mapping[node.id]
@@ -340,7 +342,6 @@ class FusedVariableShortener(VariableShortener):
         """Apply shortener for imported module."""
         shortener = self.module_to_shortener.get(node.module, None)
         if shortener is not None:
-            self.mapping.update(shortener.mapping)
             for alias in node.names:
                 if alias.name in shortener.mapping:
                     self.mapping[alias.name] = alias.name = shortener.mapping[alias.name]
@@ -573,7 +574,7 @@ def uglipy(sources, modules):
     >>> modules
     ['e', 'f']
     >>> sources[0]
-    'g=3\\ndef i(h):return h**2'
+    'b=3\\ndef d(c):return c**2'
     >>> sources[1]
     'from e import d;d(3)'
     """
@@ -615,7 +616,10 @@ def uglipy(sources, modules):
     modules = [module_to_module[module] for module in modules]
 
     # rerun shortening on ea file based on imports from other files
-    fused = FusedVariableShortener(generator, module_to_module=module_to_module, module_to_shortener=module_to_shortener)
+    fused_mapping = {}
+    for shortener in module_to_shortener.values():
+        fused_mapping.update(shortener.mapping)
+    fused = FusedVariableShortener(generator, mapping=fused_mapping, module_to_module=module_to_module, module_to_shortener=module_to_shortener)
     for tree in trees:
         fused.visit(tree)
 
