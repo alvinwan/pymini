@@ -4,7 +4,14 @@ from typing import Dict, List
 from .utils import variable_name_generator
 
 
-class ReturnSimplifier(ast.NodeTransformer):
+class NodeTransformer(ast.NodeTransformer):
+    def transform(self, *trees):
+        for tree in trees:
+            self.visit(tree)
+        return self
+
+
+class ReturnSimplifier(NodeTransformer):
     """Simplify return statements in the following form:
     
         x = (some code)
@@ -32,7 +39,8 @@ class ReturnSimplifier(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class CleanupUnusedNames(ast.NodeTransformer):
+class RemoveUnusedVariables(NodeTransformer):
+    """Remove all unused variables."""
     def __init__(self, unused_names: set[str]):
         super().__init__()
         self.unused_names = unused_names
@@ -43,7 +51,16 @@ class CleanupUnusedNames(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class ParentSetter(ast.NodeTransformer):
+class VariableNameCollector(ast.NodeVisitor):
+    """Collects all variable names in scope."""
+    def __init__(self):
+        self.names = set()
+
+    def visit_Name(self, node):
+        self.names.add(node.id)
+
+
+class ParentSetter(NodeTransformer):
     """Adds parent attribute to each node.
     
     >>> def apply(src):
@@ -64,7 +81,7 @@ class ParentSetter(ast.NodeTransformer):
         return super().visit(node)
 
 
-class CommentRemover(ast.NodeTransformer):
+class CommentRemover(NodeTransformer):
     """Drop all comments, both single-line and docstrings.
     
     >>> def apply(code):
@@ -97,16 +114,7 @@ class CommentRemover(ast.NodeTransformer):
         return node
 
 
-class VariableNameCollector(ast.NodeVisitor):
-    """Collects all variable names in scope."""
-    def __init__(self):
-        self.names = set()
-
-    def visit_Name(self, node):
-        self.names.add(node.id)
-
-
-class VariableShortener(ast.NodeTransformer):
+class VariableShortener(NodeTransformer):
     """Renames variables according to provided mapping.
     
     >>> shortener = VariableShortener(variable_name_generator(), mapping={'donotrename': 'donotrename'})
@@ -316,7 +324,7 @@ def define_custom_variables(tree, mapping):
     ast.fix_missing_locations(tree)
 
 
-class WhitespaceRemover(ast.NodeTransformer):
+class WhitespaceRemover(NodeTransformer):
     """Remove all whitespace.
 
     Performs the following whitespace removals:
@@ -550,13 +558,12 @@ def uglipy(sources, modules):
     for tree in trees:
 
         # simplify
-        simplifier = ReturnSimplifier()
-        simplifier.visit(tree)  # TODO: use location or something as well as names? say we did `x = f(x); x = f(x); return x`. this would be wrong
-        CleanupUnusedNames(simplifier.unused_names).visit(tree)
+        simplifier = ReturnSimplifier().transform(tree) # TODO: use location or something as well as names? say we did `x = f(x); x = f(x); return x`. this would be wrong
+        RemoveUnusedVariables(simplifier.unused_names).transform(tree)
 
-        # minify
-        ParentSetter().visit(tree)
-        CommentRemover().visit(tree)
+    # minify
+    ParentSetter().transform(*trees)
+    CommentRemover().transform(*trees)
 
     # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
     collector = VariableNameCollector()
@@ -566,8 +573,7 @@ def uglipy(sources, modules):
     generator = variable_name_generator(collector.names)  # create one global shortener / generator TODO: also naive
     module_to_shortener = {module: VariableShortener(generator, modules=modules) for module in modules}
     for module, tree in zip(modules, trees):
-        shortener = module_to_shortener[module]
-        shortener.visit(tree)
+        shortener = module_to_shortener[module].transform(tree)
         define_custom_variables(tree, shortener.nodes_to_insert)
     
     # shorten module names # TODO: cleanup
@@ -579,8 +585,7 @@ def uglipy(sources, modules):
     for shortener in module_to_shortener.values():
         fused_mapping.update(shortener.mapping)
     fused = FusedVariableShortener(generator, mapping=fused_mapping, module_to_module=module_to_module, module_to_shortener=module_to_shortener)
-    for tree in trees:
-        fused.visit(tree)
+    fused.transform(*trees)
 
     # final post-processing to remove whitespace (minify)
     for tree in trees:
