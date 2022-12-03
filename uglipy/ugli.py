@@ -1,9 +1,7 @@
 import ast
 import keyword
 from typing import Dict, List
-import sys
-import glob
-from pathlib import Path
+from .utils import variable_name_generator
 
 
 class ReturnSimplifier(ast.NodeTransformer):
@@ -43,55 +41,6 @@ class CleanupUnusedNames(ast.NodeTransformer):
         if isinstance(node.targets[0], ast.Name) and node.targets[0].id in self.unused_names:
             return None
         return self.generic_visit(node)
-
-
-def number_to_digits(n: int, base: int = 10) -> List[int]:
-    """Convert a number to a list of digits.
-    
-    >>> number_to_digits(0)
-    [0]
-    >>> number_to_digits(1)
-    [1]
-    >>> number_to_digits(10)
-    [1, 0]
-    >>> number_to_digits(100)
-    [1, 0, 0]
-    >>> number_to_digits(257, 16)
-    [1, 0, 1]
-    """
-    digits = [0] if n == 0 else []
-    while n > 0:
-        digits.append(n % base)
-        n //= base
-    return digits[::-1]
-
-
-def variable_name_generator(used: set[str] = []):
-    """Generate variable name not currently used in scope.
-    
-    >>> generator = variable_name_generator()
-    >>> next(generator)
-    'a'
-    >>> for i in range(25):
-    ...     _ = next(generator)
-    ... 
-    >>> next(generator)
-    'A'
-    >>> for i in range(25):
-    ...     _ = next(generator)
-    ... 
-    >>> next(generator)
-    'aa'
-    """
-    cur = 0
-    while True:
-        name = ''
-        for i, digit in enumerate(number_to_digits(cur, base=52)[::-1]):
-            base = 'a' if digit < 26 else 'A'
-            name = chr(ord(base) + ((digit % 26) - (i > 0))) + name  # for 1st digit, a = 0. for subsequent, a = 1
-        if name not in used:
-            yield name
-        cur += 1
 
 
 class ParentSetter(ast.NodeTransformer):
@@ -640,21 +589,3 @@ def uglipy(sources, modules):
         cleaned.append(string)
 
     return cleaned, modules
-
-
-def main():
-    sources, modules = [], []
-    for path in glob.iglob(sys.argv[1]):
-        if not path.endswith('.py') or '.ugli.' in path:
-            continue
-        with open(path) as f:
-            sources.append(f.read())
-        modules.append(Path(path).stem)
-    cleaned, modules = uglipy(sources, modules)
-    for source, module in zip(cleaned, modules):
-        with open(f'out/{module}.ugli.py', 'w') as f:
-            f.write(source)
-
-
-if __name__ == '__main__':
-    main()

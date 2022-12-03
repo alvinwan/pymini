@@ -55,3 +55,11 @@ By comparison, the original file size was 1355B; `uglipy` achieves the smallest 
 ```
 
 By comparison, the original file size was 1990B. `uglipy`'s file size is 6% smaller than `pyminify` and 34% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 51% to 54%.
+
+## Develop
+
+Run tests using the following, from the root directory
+
+```
+py.test --doctest-modules
+```
