@@ -350,6 +350,13 @@ def define_custom_variables(tree, mapping):
     ast.fix_missing_locations(tree)
 
 
+class Unparser:
+
+    def transform(self, *trees):
+        for tree in trees:
+            yield ast.unparse(tree)
+
+
 class WhitespaceRemover(NodeTransformer):
     """Remove all whitespace.
 
@@ -361,7 +368,7 @@ class WhitespaceRemover(NodeTransformer):
     - merge 1-liners with previous line where possible
     - remove extra whitespace around characters
     
-    >>> apply = lambda src: WhitespaceRemover().transform(src)
+    >>> apply = lambda src: WhitespaceRemover().visit(src)
     >>> apply('''
     ... 
     ... x = 7   
@@ -375,7 +382,12 @@ class WhitespaceRemover(NodeTransformer):
     ... ''')  # combines lines + merges with def line
     'def square(x):x+=1;return x**2'
     """
-    def transform(self, source: str):
+
+    def transform(self, *sources: List[str]):
+        for source in sources:
+            yield self.visit(source)
+
+    def visit(self, source: str):
         # remove blank lines
         source = '\n'.join(filter(bool, source.splitlines()))
 
@@ -611,13 +623,15 @@ def uglipy(sources, modules):
     fused_mapping = {}
     for shortener in module_to_shortener.values():
         fused_mapping.update(shortener.mapping)
-    fused = FusedVariableShortener(generator, mapping=fused_mapping, module_to_module=module_to_module, module_to_shortener=module_to_shortener)
-    fused.transform(*trees)
 
-    # final post-processing to remove whitespace (minify)
-    for tree in trees:
-        string = ast.unparse(tree)
-        string = WhitespaceRemover().transform(string)
-        cleaned.append(string)
+    pipeline = Pipeline(
+        # obfuscate across files
+        FusedVariableShortener(generator, mapping=fused_mapping, module_to_module=module_to_module, module_to_shortener=module_to_shortener),
+
+        # final post-processing to remove whitespace (minify)
+        Unparser(),
+        WhitespaceRemover(),
+    )
+    cleaned = list(pipeline.transform(*trees))
 
     return cleaned, modules
