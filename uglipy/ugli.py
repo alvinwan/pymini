@@ -328,7 +328,7 @@ class IndependentVariableShorteners(Transformer):
         return trees
 
 
-class FusedVariableShortener(NodeTransformer):
+class FusedVariableShortener(Transformer):
     def __init__(self, generator, modules, module_to_shortener):
         super().__init__()
         self.generator = generator
@@ -336,8 +336,6 @@ class FusedVariableShortener(NodeTransformer):
         self.module_to_shortener = module_to_shortener
 
     def transform(self, *trees):
-        # TODO: break this up into individual, isolated rules in a pipeline
-        
         # shorten module names # TODO: cleanup
         module_to_module = {module: next(self.generator) for module in self.modules}
         self.modules = [module_to_module[module] for module in self.modules]
@@ -641,7 +639,7 @@ def uglipy(sources, modules):
 
         # obfuscate
         collector := VariableNameCollector(),  # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
-        ind := IndependentVariableShorteners(names=collector.names, modules=modules),  # obscure within files (but not across files
+        ind := IndependentVariableShorteners(names=collector.names, modules=modules),  # obscure within files (but not across files)
         fused := FusedVariableShortener(generator=ind.generator, module_to_shortener=ind.module_to_shortener, modules=ind.modules),  # obscate across files
 
         # final post-processing to remove whitespace (minify)
