@@ -314,32 +314,40 @@ class VariableShortener(NodeTransformer):
         return node
 
 
-class FusedVariableShortener(NodeTransformer):
-    def __init__(self, modules):
+class IndependentVariableShorteners(Transformer):
+    def __init__(self, names, modules):
         super().__init__()
-        self.collector = VariableNameCollector()  # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
+        self.generator = variable_name_generator(names)
+        self.module_to_shortener = {module: VariableShortener(self.generator, modules=modules) for module in modules}
         self.modules = modules
 
     def transform(self, *trees):
-        # TODO: break this up into individual, isolated rules in a pipeline
-        self.collector.transform(*trees)
-
-        generator = variable_name_generator(self.collector.names)  # create one global shortener / generator TODO: also naive
-        module_to_shortener = {module: VariableShortener(generator, modules=self.modules) for module in self.modules}
         for module, tree in zip(self.modules, trees):
-            module_to_shortener[module].transform(tree)
-            define_custom_variables(tree, module_to_shortener[module].nodes_to_insert)
+            self.module_to_shortener[module].transform(tree)
+            define_custom_variables(tree, self.module_to_shortener[module].nodes_to_insert)
+        return trees
+
+
+class FusedVariableShortener(NodeTransformer):
+    def __init__(self, generator, modules, module_to_shortener):
+        super().__init__()
+        self.generator = generator
+        self.modules = modules
+        self.module_to_shortener = module_to_shortener
+
+    def transform(self, *trees):
+        # TODO: break this up into individual, isolated rules in a pipeline
         
         # shorten module names # TODO: cleanup
-        module_to_module = {module: next(generator) for module in self.modules}
+        module_to_module = {module: next(self.generator) for module in self.modules}
         self.modules = [module_to_module[module] for module in self.modules]
 
         # rerun shortening on ea file based on imports from other files
         fused_mapping = {}
-        for shortener in module_to_shortener.values():
+        for shortener in self.module_to_shortener.values():
             fused_mapping.update(shortener.mapping)
 
-        imported = ImportedVariableShortener(generator, mapping=fused_mapping, module_to_module=module_to_module, module_to_shortener=module_to_shortener)
+        imported = ImportedVariableShortener(self.generator, mapping=fused_mapping, module_to_module=module_to_module, module_to_shortener=self.module_to_shortener)
         return imported.transform(*trees)
 
 
@@ -632,7 +640,9 @@ def uglipy(sources, modules):
         CommentRemover(),
 
         # obfuscate
-        fused := FusedVariableShortener(modules),  # obscate across files
+        collector := VariableNameCollector(),  # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
+        ind := IndependentVariableShorteners(names=collector.names, modules=modules),  # obscure within files (but not across files
+        fused := FusedVariableShortener(generator=ind.generator, module_to_shortener=ind.module_to_shortener, modules=ind.modules),  # obscate across files
 
         # final post-processing to remove whitespace (minify)
         Unparser(),
