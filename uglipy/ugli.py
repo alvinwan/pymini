@@ -30,16 +30,6 @@ class Pipeline:
         return trees
 
 
-class Simplifier(Pipeline):
-    def transform(self, *trees):
-        for tree in trees:
-            unused_names = set()
-            for transformer in self.transformers:
-                unused_names |= transformer.transform(tree).unused_names
-            RemoveUnusedVariables(unused_names).transform(tree)  # TODO: cleaner way to pass state, so remove need for Simplifier wrapper?
-        return trees
-
-
 class ReturnSimplifier(NodeTransformer):
     """Simplify return statements in the following form:
     
@@ -49,6 +39,9 @@ class ReturnSimplifier(NodeTransformer):
     to
     
         return (some code)
+
+    NOTE: unused_names must be modified in-place, since the set is passed to
+    RemoveUnusedVariables at initialization. Can't return a new set.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -69,7 +62,11 @@ class ReturnSimplifier(NodeTransformer):
 
 
 class RemoveUnusedVariables(NodeTransformer):
-    """Remove all unused variables."""
+    """Remove all unused variables.
+    
+    NOTE: cannot store a copy of unused_names, as this set is modified in-place
+    after initialization.
+    """
     def __init__(self, unused_names: Set[str]):
         super().__init__()
         self.unused_names = unused_names
@@ -587,9 +584,8 @@ def uglipy(sources, modules):
     pipeline = Pipeline(
 
         # simplify
-        Simplifier(
-            ReturnSimplifier(),
-        ),
+        simplifier := ReturnSimplifier(),
+        RemoveUnusedVariables(simplifier.unused_names),
 
         # minify
         ParentSetter(),
