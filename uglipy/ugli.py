@@ -314,14 +314,43 @@ class VariableShortener(NodeTransformer):
         return node
 
 
-class FusedVariableShortener(VariableShortener):
+class FusedVariableShortener(NodeTransformer):
+    def __init__(self, modules):
+        super().__init__()
+        self.collector = VariableNameCollector()  # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
+        self.modules = modules
+
+    def transform(self, *trees):
+        # TODO: break this up into individual, isolated rules in a pipeline
+        self.collector.transform(*trees)
+
+        generator = variable_name_generator(self.collector.names)  # create one global shortener / generator TODO: also naive
+        module_to_shortener = {module: VariableShortener(generator, modules=self.modules) for module in self.modules}
+        for module, tree in zip(self.modules, trees):
+            module_to_shortener[module].transform(tree)
+            define_custom_variables(tree, module_to_shortener[module].nodes_to_insert)
+        
+        # shorten module names # TODO: cleanup
+        module_to_module = {module: next(generator) for module in self.modules}
+        self.modules = [module_to_module[module] for module in self.modules]
+
+        # rerun shortening on ea file based on imports from other files
+        fused_mapping = {}
+        for shortener in module_to_shortener.values():
+            fused_mapping.update(shortener.mapping)
+
+        imported = ImportedVariableShortener(generator, mapping=fused_mapping, module_to_module=module_to_module, module_to_shortener=module_to_shortener)
+        return imported.transform(*trees)
+
+
+class ImportedVariableShortener(VariableShortener):
     """Use different module shorteners to adjust variables in this module
     
     >>> generator = variable_name_generator()
     >>> shortener = VariableShortener(generator)
     >>> ast.unparse(shortener.visit(ast.parse('demiurgic = 1\\nholy = demiurgic')))
     'a = 1\\nb = a'
-    >>> fused = FusedVariableShortener(generator, module_to_shortener={'silly': shortener})
+    >>> fused = ImportedVariableShortener(generator, module_to_shortener={'silly': shortener})
     >>> apply = lambda src: ast.unparse(fused.visit(ast.parse(src)))
     >>> apply('from silly import demiurgic, dontreplaceme; print(demiurgic)')
     'from silly import a, dontreplaceme\\nprint(a)'
@@ -591,7 +620,6 @@ def uglipy(sources, modules):
     assert len(sources) == len(modules)
 
     trees = [ast.parse(source) for source in sources]
-    cleaned = []
 
     pipeline = Pipeline(
 
@@ -604,29 +632,7 @@ def uglipy(sources, modules):
         CommentRemover(),
 
         # obfuscate
-        collector := VariableNameCollector(),  # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
-    )
-
-    pipeline.transform(*trees)
-
-    generator = variable_name_generator(collector.names)  # create one global shortener / generator TODO: also naive
-    module_to_shortener = {module: VariableShortener(generator, modules=modules) for module in modules}
-    for module, tree in zip(modules, trees):
-        module_to_shortener[module].transform(tree)
-        define_custom_variables(tree, module_to_shortener[module].nodes_to_insert)
-    
-    # shorten module names # TODO: cleanup
-    module_to_module = {module: next(generator) for module in modules}
-    modules = [module_to_module[module] for module in modules]
-
-    # rerun shortening on ea file based on imports from other files
-    fused_mapping = {}
-    for shortener in module_to_shortener.values():
-        fused_mapping.update(shortener.mapping)
-
-    pipeline = Pipeline(
-        # obfuscate across files
-        FusedVariableShortener(generator, mapping=fused_mapping, module_to_module=module_to_module, module_to_shortener=module_to_shortener),
+        fused := FusedVariableShortener(modules),  # obscate across files
 
         # final post-processing to remove whitespace (minify)
         Unparser(),
@@ -634,4 +640,4 @@ def uglipy(sources, modules):
     )
     cleaned = list(pipeline.transform(*trees))
 
-    return cleaned, modules
+    return cleaned, fused.modules
