@@ -8,7 +8,7 @@ class Transformer:
     def transform(self, *trees):
         for tree in trees:
             self.visit(tree)
-        return self
+        return trees
 
 
 class NodeTransformer(Transformer, ast.NodeTransformer):
@@ -26,7 +26,7 @@ class Pipeline:
 
     def transform(self, *trees):
         for transformer in self.transformers:
-            transformer.transform(*trees)
+            trees = transformer.transform(*trees)
         return trees
 
 
@@ -361,7 +361,7 @@ class WhitespaceRemover(NodeTransformer):
     - merge 1-liners with previous line where possible
     - remove extra whitespace around characters
     
-    >>> apply = lambda src: WhitespaceRemover().handle(src)
+    >>> apply = lambda src: WhitespaceRemover().transform(src)
     >>> apply('''
     ... 
     ... x = 7   
@@ -375,7 +375,7 @@ class WhitespaceRemover(NodeTransformer):
     ... ''')  # combines lines + merges with def line
     'def square(x):x+=1;return x**2'
     """
-    def handle(self, source: str):
+    def transform(self, source: str):
         # remove blank lines
         source = '\n'.join(filter(bool, source.splitlines()))
 
@@ -600,8 +600,8 @@ def uglipy(sources, modules):
     generator = variable_name_generator(collector.names)  # create one global shortener / generator TODO: also naive
     module_to_shortener = {module: VariableShortener(generator, modules=modules) for module in modules}
     for module, tree in zip(modules, trees):
-        shortener = module_to_shortener[module].transform(tree)
-        define_custom_variables(tree, shortener.nodes_to_insert)
+        module_to_shortener[module].transform(tree)
+        define_custom_variables(tree, module_to_shortener[module].nodes_to_insert)
     
     # shorten module names # TODO: cleanup
     module_to_module = {module: next(generator) for module in modules}
@@ -617,7 +617,7 @@ def uglipy(sources, modules):
     # final post-processing to remove whitespace (minify)
     for tree in trees:
         string = ast.unparse(tree)
-        string = WhitespaceRemover().handle(string)
+        string = WhitespaceRemover().transform(string)
         cleaned.append(string)
 
     return cleaned, modules
