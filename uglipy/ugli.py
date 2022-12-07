@@ -1,14 +1,43 @@
 import ast
 import keyword
-from typing import Dict, List
+from typing import Dict, List, Set
 from .utils import variable_name_generator
 
 
-class NodeTransformer(ast.NodeTransformer):
+class Transformer:
     def transform(self, *trees):
         for tree in trees:
             self.visit(tree)
         return self
+
+
+class NodeTransformer(Transformer, ast.NodeTransformer):
+    pass
+
+
+class NodeVisitor(Transformer, ast.NodeVisitor):
+    pass
+
+
+class Pipeline:
+
+    def __init__(self, *transformers):
+        self.transformers = transformers
+
+    def transform(self, *trees):
+        for transformer in self.transformers:
+            transformer.transform(*trees)
+        return trees
+
+
+class Simplifier(Pipeline):
+    def transform(self, *trees):
+        for tree in trees:
+            unused_names = set()
+            for transformer in self.transformers:
+                unused_names |= transformer.transform(tree).unused_names
+            RemoveUnusedVariables(unused_names).transform(tree)  # TODO: cleaner way to pass state, so remove need for Simplifier wrapper?
+        return trees
 
 
 class ReturnSimplifier(NodeTransformer):
@@ -41,7 +70,7 @@ class ReturnSimplifier(NodeTransformer):
 
 class RemoveUnusedVariables(NodeTransformer):
     """Remove all unused variables."""
-    def __init__(self, unused_names: set[str]):
+    def __init__(self, unused_names: Set[str]):
         super().__init__()
         self.unused_names = unused_names
 
@@ -51,7 +80,7 @@ class RemoveUnusedVariables(NodeTransformer):
         return self.generic_visit(node)
 
 
-class VariableNameCollector(ast.NodeVisitor):
+class VariableNameCollector(NodeVisitor):
     """Collects all variable names in scope."""
     def __init__(self):
         self.names = set()
@@ -555,20 +584,22 @@ def uglipy(sources, modules):
     trees = [ast.parse(source) for source in sources]
     cleaned = []
 
-    for tree in trees:
+    pipeline = Pipeline(
 
         # simplify
-        simplifier = ReturnSimplifier().transform(tree) # TODO: use location or something as well as names? say we did `x = f(x); x = f(x); return x`. this would be wrong
-        RemoveUnusedVariables(simplifier.unused_names).transform(tree)
+        Simplifier(
+            ReturnSimplifier(),
+        ),
 
-    # minify
-    ParentSetter().transform(*trees)
-    CommentRemover().transform(*trees)
+        # minify
+        ParentSetter(),
+        CommentRemover(),
 
-    # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
-    collector = VariableNameCollector()
-    for tree in trees:
-        collector.visit(tree)
+        # obfuscate
+        collector := VariableNameCollector(),  # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
+    )
+
+    pipeline.transform(*trees)
 
     generator = variable_name_generator(collector.names)  # create one global shortener / generator TODO: also naive
     module_to_shortener = {module: VariableShortener(generator, modules=modules) for module in modules}

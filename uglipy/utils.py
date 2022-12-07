@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Set
 
 
 def number_to_digits(n: int, base: int = 10) -> List[int]:
@@ -22,7 +22,7 @@ def number_to_digits(n: int, base: int = 10) -> List[int]:
     return digits[::-1]
 
 
-def variable_name_generator(used: set[str] = []):
+def variable_name_generator(used: Set[str] = []):
     """Generate variable name not currently used in scope.
     
     >>> generator = variable_name_generator()
