@@ -8,7 +8,7 @@ Python simplifier, minifier, and obfuscator. Built to operate on entire librarie
 
 ## Usage
 
-    ugli [options] <file>
+    uglipy [options] <file>
 
 ## Comparison
 
@@ -34,7 +34,7 @@ mkdir -p out
 pyminify --rename-globals --remove-literal-statements sample/test.py > out/pyminify.py
 pyminifier --obfuscate sample/test.py > out/pyminifier.py
 python -m mnfy sample/test.py > out/mnfy.py
-python ugli.py sample/test.py > out/pyminiest.py
+uglipy sample/test.py > out/pyminiest.py
 ```
 
 Then, run `ls -lh out`. You should see the following.

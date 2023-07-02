@@ -168,6 +168,8 @@ class VariableShortener(NodeTransformer):
         'import demiurgic as a'
         >>> apply('from demiurgic import palpitation')
         'from demiurgic import palpitation as b'
+        >>> apply('from demiurgic import a')  # single-letter import should be left alone
+        'from demiurgic import a'
         >>> print(apply('import demiurgic;demiurgic.palpitation()'))  # TODO: bug - variable should remember object its bound to
         import demiurgic as c
         c.b()
@@ -183,7 +185,8 @@ class VariableShortener(NodeTransformer):
             for alias in node.names:
                 if isinstance(node, ast.ImportFrom) or alias.name not in self.modules:
                     old = alias.asname or alias.name
-                    self.mapping[old] = alias.asname = next(self.generator)
+                    if len(old) > 1:
+                        self.mapping[old] = alias.asname = next(self.generator)
         return self.generic_visit(node)
 
     visit_Import = _visit_ImportOrImportFrom
@@ -244,7 +247,8 @@ class VariableShortener(NodeTransformer):
     def visit_Name(self, node):
         """Apply renamed variables.
         
-        Additionally, if any variable is used more than once, shorten it.
+        Additionally, if any variable is used more than once *and the variable
+        length is greater than 1, shorten it.
 
         >>> shortener = VariableShortener(variable_name_generator())
         >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
@@ -263,7 +267,7 @@ class VariableShortener(NodeTransformer):
             self.mapping[node.id] = new_variable_name = next(self.generator)
             self.nodes_to_insert.append(ast.parse(f'{new_variable_name} = {node.id}').body[0])
             self.name_to_node.pop(node.id).id = node.id = new_variable_name
-        else:
+        elif len(node.id) > 1:  # if original variable name more than 1 char
             self.name_to_node[node.id] = node
         return self.generic_visit(node)
 
@@ -349,6 +353,7 @@ class FusedVariableShortener(Transformer):
         return imported.transform(*trees)
 
 
+# TODO: buggy. causes a=a bug. Somehow, inheritance causes problems.
 class ImportedVariableShortener(VariableShortener):
     """Use different module shorteners to adjust variables in this module
     
@@ -602,7 +607,7 @@ class WhitespaceRemover(NodeTransformer):
         return '\n'.join(lines)
 
 
-def uglipy(sources, modules):
+def uglipy(sources, modules='main'):
     """Uglify source code. Simplify, minify, and obfuscate.
 
     >>> sources, modules = uglipy(['''a = 3
@@ -640,7 +645,7 @@ def uglipy(sources, modules):
         # obfuscate
         collector := VariableNameCollector(),  # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
         ind := IndependentVariableShorteners(names=collector.names, modules=modules),  # obscure within files (but not across files)
-        fused := FusedVariableShortener(generator=ind.generator, module_to_shortener=ind.module_to_shortener, modules=ind.modules),  # obscate across files
+        fused := FusedVariableShortener(generator=ind.generator, module_to_shortener=ind.module_to_shortener, modules=ind.modules),  # obscate across files  # TODO: rm for now. causing variable renaming issues, even for single file
 
         # final post-processing to remove whitespace (minify)
         Unparser(),
