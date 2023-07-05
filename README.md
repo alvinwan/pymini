@@ -14,7 +14,7 @@ To uglify a library, use the following options to preserve
 your ability to import and use the library's publicly-facing
 utilities.
 
-    uglipy --keep-module-names <file>
+    uglipy --keep-module-names --keep-global-variables <file>
 
 ## Comparison
 

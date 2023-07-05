@@ -149,7 +149,7 @@ class VariableShortener(NodeTransformer):
     a = 1
     donotrename = 2
     """
-    def __init__(self, generator, mapping=None, modules=()):
+    def __init__(self, generator, mapping=None, modules=(), keep_global_variables=False):
         self.mapping = mapping or {}
         self.generator = generator
         self.name_to_node = {}
@@ -158,6 +158,13 @@ class VariableShortener(NodeTransformer):
         self.str_name_to_node = {}
         self.str_mapping = {}
         self.modules = modules # dont alias variables imported from these modules
+        self.keep_global_variables = keep_global_variables
+
+    def _is_node_global(self, node):
+        """Check if a node is global."""
+        return (
+            not hasattr(node, 'parent') or isinstance(node.parent, ast.Module)
+        )
 
     def _visit_ImportOrImportFrom(self, node):
         """Shorten imported library names.
@@ -199,8 +206,13 @@ class VariableShortener(NodeTransformer):
         >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
         >>> apply('class Demiurgic: pass\\nholy = Demiurgic()')
         'class a:\\n    pass\\nb = a()'
+        >>> shortener = VariableShortener(variable_name_generator(), keep_global_variables=True)
+        >>> apply('class Demiurgic: pass\\nholy = Demiurgic()')
+        'class Demiurgic:\\n    pass\\nholy = Demiurgic()'
         """
-        if node.name not in self.mapping.values():  # TODO: make .values() more efficient
+        if node.name not in self.mapping.values() and not (  # TODO: make .values() more efficient 
+            self.keep_global_variables and self._is_node_global(node)
+        ):  # TODO: rename but insert var def if worth it
             self.mapping[node.name] = node.name = next(self.generator)
         return self.generic_visit(node)
 
@@ -211,7 +223,12 @@ class VariableShortener(NodeTransformer):
         >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
         >>> apply('def demiurgic(palpitation): return palpitation\\nholy = demiurgic()')
         'def b(a):\\n    return a\\nc = b()'
+        >>> shortener = VariableShortener(variable_name_generator(), keep_global_variables=True)
+        >>> apply('def demiurgic(palpitation): return palpitation\\nholy = demiurgic()')
+        'def demiurgic(palpitation):\\n    return palpitation\\nholy = demiurgic()'
         """
+        if self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it
+            return self.generic_visit(node)
         for arg in node.args.args + [node.args.vararg, node.args.kwarg]:
             if arg is not None and arg.arg not in self.mapping.values():  # TODO: make .values() more efficient
                 self.mapping[arg.arg] = arg.arg = next(self.generator)
@@ -228,7 +245,12 @@ class VariableShortener(NodeTransformer):
         >>> apply = lambda src: ast.unparse(shortener.visit(ast.parse(src)))
         >>> apply('demiurgic = 1\\nholy = demiurgic')
         'a = 1\\nb = a'
+        >>> shortener = VariableShortener(variable_name_generator(), keep_global_variables=True)
+        >>> apply('demiurgic = 1\\nholy = demiurgic')
+        'demiurgic = 1\\nholy = demiurgic'
         """
+        if self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it
+            return self.generic_visit(node)
         for target in node.targets:
             if isinstance(target, ast.Name) and target.id not in self.mapping.values():  # TODO: make .values() more efficient
                 self.mapping[target.id] = target.id = next(self.generator)
@@ -258,7 +280,15 @@ class VariableShortener(NodeTransformer):
         'a = 1\\nb = a\\necho(a)'
         >>> apply('print(demiurgic, demiurgic)')  # now print has been seen 2x
         'c(a, a)'
+        >>> shortener = VariableShortener(variable_name_generator(), keep_global_variables=True)
+        >>> apply('print(demiurgic)')
+        'print(demiurgic)'
+        >>> apply('print(demiurgic)')  # saw 'print' 2x but didn't replace
+        'print(demiurgic)'
         """
+        # TODO: this optimization should only apply to var def
+        if self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it
+            return self.generic_visit(node)
         if node.id in self.mapping.values():  # TODO: make .values() more efficient
             return node
         if node.id in self.mapping:
@@ -319,10 +349,16 @@ class VariableShortener(NodeTransformer):
 
 
 class IndependentVariableShorteners(Transformer):
-    def __init__(self, names, modules):
+    def __init__(self, names, modules, keep_global_variables=False):
         super().__init__()
         self.generator = variable_name_generator(names)
-        self.module_to_shortener = {module: VariableShortener(self.generator, modules=modules) for module in modules}
+        self.module_to_shortener = {
+            module: VariableShortener(
+                self.generator,
+                modules=modules,
+                keep_global_variables=keep_global_variables
+            ) for module in modules
+        }
         self.modules = modules
 
     def transform(self, *trees):
@@ -634,7 +670,8 @@ class WhitespaceRemover(NodeTransformer):
         return '\n'.join(lines)
 
 
-def uglipy(sources, modules='main', keep_module_names=False):
+def uglipy(sources, modules='main', keep_module_names=False,
+           keep_global_variables=False):
     """Uglify source code. Simplify, minify, and obfuscate.
 
     >>> sources, modules = uglipy(['''a = 3
@@ -671,7 +708,11 @@ def uglipy(sources, modules='main', keep_module_names=False):
 
         # obfuscate
         collector := VariableNameCollector(),  # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
-        ind := IndependentVariableShorteners(names=collector.names, modules=modules),  # obscure within files (but not across files)
+        ind := IndependentVariableShorteners(
+            names=collector.names,
+            modules=modules,
+            keep_global_variables=keep_global_variables,
+        ),  # obscure within files (but not across files)
         fused := FusedVariableShortener(
             generator=ind.generator,
             module_to_shortener=ind.module_to_shortener,
