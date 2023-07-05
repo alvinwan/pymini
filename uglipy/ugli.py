@@ -340,20 +340,34 @@ class FusedVariableShortener(Transformer):
         self.module_to_shortener = module_to_shortener
 
     def transform(self, *trees):
-        # shorten module names # TODO: cleanup
+        # shorten module names
         module_to_module = {module: next(self.generator) for module in self.modules}
         self.modules = [module_to_module[module] for module in self.modules]
 
-        # rerun shortening on ea file based on imports from other files
-        fused_mapping = {}
-        for shortener in self.module_to_shortener.values():
-            fused_mapping.update(shortener.mapping)
+        new_trees = []  # TODO: cleanup
+        for tree, module in zip(trees, module_to_module):
 
-        imported = ImportedVariableShortener(self.generator, mapping=fused_mapping, module_to_module=module_to_module, module_to_shortener=self.module_to_shortener)
-        return imported.transform(*trees)
+            # rerun shortening on ea file based on imports from *other files
+            fused_mapping = {}
+            for _module, shortener in self.module_to_shortener.items():
+                if _module != module:
+                    fused_mapping.update(shortener.mapping)
+                else:
+                    # HACK: identity needed, so that we don't rename variables
+                    # *again. TODO: figure out why single-char variables are
+                    # being renamed
+                    fused_mapping.update({v: v for v in shortener.mapping.values()})
+
+            imported = ImportedVariableShortener(
+                self.generator,
+                mapping=fused_mapping,
+                module_to_module={_module: value for _module, value in module_to_module.items() if module != _module},
+                module_to_shortener={_module: value for _module, value in self.module_to_shortener.items() if module != _module},
+            )
+            new_trees.extend(imported.transform(tree))
+        return new_trees
 
 
-# TODO: buggy. causes a=a bug. Somehow, inheritance causes problems.
 class ImportedVariableShortener(VariableShortener):
     """Use different module shorteners to adjust variables in this module
     
