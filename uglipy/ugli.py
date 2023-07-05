@@ -225,13 +225,13 @@ class VariableShortener(NodeTransformer):
         'def b(a):\\n    return a\\nc = b()'
         >>> shortener = VariableShortener(variable_name_generator(), keep_global_variables=True)
         >>> apply('def demiurgic(palpitation): return palpitation\\nholy = demiurgic()')
-        'def demiurgic(palpitation):\\n    return palpitation\\nholy = demiurgic()'
+        'def demiurgic(a):\\n    return a\\nholy = demiurgic()'
         """
-        if self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it
-            return self.generic_visit(node)
         for arg in node.args.args + [node.args.vararg, node.args.kwarg]:
             if arg is not None and arg.arg not in self.mapping.values():  # TODO: make .values() more efficient
                 self.mapping[arg.arg] = arg.arg = next(self.generator)
+        if self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it
+            return self.generic_visit(node)
         if node.name not in self.mapping.values():  # TODO: need to dedup this logic
             self.mapping[node.name] = node.name = next(self.generator)
         return self.generic_visit(node)
@@ -286,13 +286,12 @@ class VariableShortener(NodeTransformer):
         >>> apply('print(demiurgic)')  # saw 'print' 2x but didn't replace
         'print(demiurgic)'
         """
-        # TODO: this optimization should only apply to var def
-        if self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it
-            return self.generic_visit(node)
         if node.id in self.mapping.values():  # TODO: make .values() more efficient
             return node
         if node.id in self.mapping:
             node.id = self.mapping[node.id]
+        elif self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it  # TODO: this optimization should only apply to var def
+            return self.generic_visit(node)
         elif node.id in self.name_to_node:
             self.mapping[node.id] = new_variable_name = next(self.generator)
             self.nodes_to_insert.append(ast.parse(f'{new_variable_name} = {node.id}').body[0])
@@ -391,7 +390,10 @@ class FusedVariableShortener(Transformer):
 
         # shorten module names
         module_to_module = {module: next(self.generator) for module in self.modules}
-        self.modules = [module_to_module[module] for module in self.modules]
+
+        # NOTE: Must modify in-place, as this list is passed to Fuser
+        for i, module in enumerate(self.modules):
+            self.modules[i] = module_to_module[module]
 
         new_trees = []  # TODO: cleanup
         for tree, module in zip(trees, module_to_module):
