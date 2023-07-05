@@ -333,13 +333,26 @@ class IndependentVariableShorteners(Transformer):
 
 
 class FusedVariableShortener(Transformer):
-    def __init__(self, generator, modules, module_to_shortener):
+    """
+    Fuse variable shortening across multiple files. Additionally and optionally 
+    shortens filenames.
+    
+    >>> fused = FusedVariableShortener(variable_name_generator(), ('donotrenameme',), {}, keep_module_names=True)
+    >>> _ = fused.transform(None)
+    >>> fused.modules
+    ('donotrenameme',)
+    """
+    def __init__(self, generator, modules, module_to_shortener, keep_module_names=False):
         super().__init__()
         self.generator = generator
         self.modules = modules
         self.module_to_shortener = module_to_shortener
+        self.keep_module_names = keep_module_names
 
     def transform(self, *trees):
+        if self.keep_module_names:
+            return trees
+
         # shorten module names
         module_to_module = {module: next(self.generator) for module in self.modules}
         self.modules = [module_to_module[module] for module in self.modules]
@@ -621,7 +634,7 @@ class WhitespaceRemover(NodeTransformer):
         return '\n'.join(lines)
 
 
-def uglipy(sources, modules='main'):
+def uglipy(sources, modules='main', keep_module_names=False):
     """Uglify source code. Simplify, minify, and obfuscate.
 
     >>> sources, modules = uglipy(['''a = 3
@@ -659,7 +672,12 @@ def uglipy(sources, modules='main'):
         # obfuscate
         collector := VariableNameCollector(),  # gather all variables across files TODO: this is naive. could compress further by actually tracking only variables in the right scope, so we can use more 1-letter vars
         ind := IndependentVariableShorteners(names=collector.names, modules=modules),  # obscure within files (but not across files)
-        fused := FusedVariableShortener(generator=ind.generator, module_to_shortener=ind.module_to_shortener, modules=ind.modules),  # obscate across files  # TODO: rm for now. causing variable renaming issues, even for single file
+        fused := FusedVariableShortener(
+            generator=ind.generator,
+            module_to_shortener=ind.module_to_shortener,
+            modules=ind.modules,
+            keep_module_names=keep_module_names,
+        ),  # obscate across files
 
         # final post-processing to remove whitespace (minify)
         Unparser(),
