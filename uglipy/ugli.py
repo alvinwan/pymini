@@ -446,6 +446,28 @@ class ImportedVariableShortener(VariableShortener):
         return self.generic_visit(node)
 
 
+class Fuser(Transformer):
+    def __init__(self, modules):
+        super().__init__()
+        self.modules = modules
+
+    def transform(self, *trees):
+        return trees
+
+
+class FileFuser(Fuser):
+    """Fuse all files together.
+    
+    Determine dependency between files by checking import statements. After
+    linearizing dependencies, combine files in that order.
+    """
+    def transform(self, *trees):
+        # TODO: find imports and use them to determine file ordering
+        for tree in trees[1:]:
+            trees[0].body += tree.body
+        return [trees[0]]
+
+
 def define_custom_variables(tree, mapping):
     root = next(ast.walk(tree))
     for node in mapping:
@@ -671,7 +693,7 @@ class WhitespaceRemover(NodeTransformer):
 
 
 def uglipy(sources, modules='main', keep_module_names=False,
-           keep_global_variables=False):
+           keep_global_variables=False, output_single_file=False,):
     """Uglify source code. Simplify, minify, and obfuscate.
 
     >>> sources, modules = uglipy(['''a = 3
@@ -718,7 +740,13 @@ def uglipy(sources, modules='main', keep_module_names=False,
             module_to_shortener=ind.module_to_shortener,
             modules=ind.modules,
             keep_module_names=keep_module_names,
-        ),  # obscate across files
+        ),  # obfuscate across files
+
+        # optionally fuse files
+        fuser := (
+            FileFuser(modules=fused.modules) if output_single_file
+            else Fuser(modules=fused.modules)
+        ),
 
         # final post-processing to remove whitespace (minify)
         Unparser(),
@@ -726,4 +754,4 @@ def uglipy(sources, modules='main', keep_module_names=False,
     )
     cleaned = list(pipeline.transform(*trees))
 
-    return cleaned, fused.modules
+    return cleaned, fuser.modules
