@@ -1,4 +1,4 @@
-from uglipy.ugli import uglipy
+from pymini.pymini import minify
 from pathlib import Path
 import pytest
 
@@ -9,4 +9,4 @@ import pytest
 ])
 def test_reduction(path, size):
     with open(path) as f:
-        assert len(uglipy(f.read(), Path(path).stem)) <= size
+        assert len(minify(f.read(), Path(path).stem)) <= size

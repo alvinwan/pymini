@@ -3,12 +3,12 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "uglipy"
+name = "pymini"
 version = "0.1.0"
 authors = [
   { name="Alvin Wan", email="hi@alvinwan.com" },
 ]
-description = "Simplify, minify, and obfuscate python"
+description = "Minify python"
 readme = "README.md"
 requires-python = ">=3.7"
 classifiers = [
@@ -19,11 +19,11 @@ classifiers = [
 dependencies = []
 
 [tool.setuptools.packages.find]
-include = ["uglipy"]
+include = ["pymini"]
 
 [project.scripts]
-uglipy = "uglipy.cli:main"
+pymini = "pymini.cli:main"
 
 [project.urls]
-"Homepage" = "https://github.com/alvinwan/uglipy"
-"Bug Tracker" = "https://github.com/alvinwan/uglipy/issues"
+"Homepage" = "https://github.com/alvinwan/pymini"
+"Bug Tracker" = "https://github.com/alvinwan/pymini/issues"

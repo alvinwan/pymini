@@ -694,7 +694,7 @@ class WhitespaceRemover(NodeTransformer):
         return '\n'.join(lines)
 
 
-def uglipy(sources, modules='main', keep_module_names=False,
+def minify(sources, modules='main', keep_module_names=False,
            keep_global_variables=False, output_single_file=False,):
     """Uglify source code. Simplify, minify, and obfuscate.
 

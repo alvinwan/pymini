@@ -1,20 +1,20 @@
-# ugli.py
+# pymini
 
-Python simplifier, minifier, and obfuscator. Built to operate on entire libraries, persisting and supporting obfuscation across files.
+Python minifier. Built to operate on entire libraries, persisting and supporting minification across files.
 
 ## Installation
 
-    pip install ugli
+    pip install pymini
 
 ## Usage
 
-    uglipy [options] <file>
+    pymini [options] <file>
 
 To uglify a library, use the following options to preserve
 your ability to import and use the library's publicly-facing
 utilities.
 
-    uglipy --keep-module-names --keep-global-variables <file>
+    pymini --keep-module-names --keep-global-variables <file>
 
 ## Comparison
 
@@ -30,7 +30,7 @@ To repeat our results, run the following to setup.
 pip install python-minifier
 pip install setuptools==57.5.0 && pip install pyminifier  # hack to get pyminifer to install
 pip install mnfy  # if you're running python3.4
-pip install uglipy  # ours
+pip install pymini  # ours
 ```
 
 Then, run the following to get mini'd versions of the sample file `sample/test.py`, which comes from `pyminifer`'s repository.
