@@ -162,26 +162,28 @@ class VariableShortener(NodeTransformer):
     a = 1
     donotrename = 2
     """
-    # Deferred optimizations intentionally left off after validating against
-    # TexSoup and similar package-shaped inputs:
-    # - aliasing repeated name reads into generated locals
-    # - hoisting repeated string literals into generated locals at module or
-    #   class scope
-    # - renaming attribute call sites such as obj.method(...)
-    # - renaming methods, class-body attributes, and top-level class names in
-    #   preserve-public-API mode
+    # Compression passes in this transformer use these guardrails:
+    # - repeated-name aliasing is statement-local and deleted after the
+    #   statement, so helpers do not leak across later code
+    # - repeated-string hoisting now runs at function, module, and class scope,
+    #   with cleanup deletes for module/class helpers
+    # - preserve-public-API mode can rename top-level classes, methods, and
+    #   class-body attributes, but it emits explicit aliases and fixes class
+    #   __name__/__qualname__ for compatibility
+    # - attribute rewriting is limited to owners we can prove from the AST
+    #   (`self`, `cls`, or known class names), not arbitrary dynamic receivers
     #
-    # All of these reduce size further, but each one caused real runtime
-    # regressions once decorators, descriptors, comprehensions, import-time side
-    # effects, or class introspection entered the picture. Re-enable them only
-    # with regression coverage in tests/test_api.py and the checked-in example
-    # outputs kept in sync via scripts/regenerate_examples.py.
+    # Keep regression coverage in tests/test_api.py and checked-in example
+    # outputs in sync via scripts/regenerate_examples.py whenever these rules
+    # change.
     def __init__(self, generator, mapping=None, modules=(), keep_global_variables=False):
         self.mapping = mapping or {}
         self.generator = generator
         self.nodes_to_append = []
         self.public_global_names = set()
         self.scope_stack = []
+        self.class_context_stack = []
+        self.class_member_mappings = {}
         self.modules = set(modules)  # don't alias variables imported from these modules
         self.keep_global_variables = keep_global_variables
 
@@ -192,7 +194,7 @@ class VariableShortener(NodeTransformer):
         )
 
     def _rename_identifier(self, old_name):
-        if old_name not in self.mapping.values():
+        if old_name not in self.mapping:
             self.mapping[old_name] = next(self.generator)
         return self.mapping[old_name]
 
@@ -200,8 +202,90 @@ class VariableShortener(NodeTransformer):
         if old_name != new_name:
             self.nodes_to_append.append(ast.parse(f"{old_name} = {new_name}").body[0])
 
+    def _generated_assignment(self, source):
+        node = ast.parse(source).body[0]
+        node._pymini_generated = True
+        return node
+
+    def _containing_module(self, node):
+        current = node
+        while hasattr(current, "parent") and not isinstance(current.parent, ast.Module):
+            current = current.parent
+        return current.parent if hasattr(current, "parent") else None
+
+    def _current_class_context(self):
+        if self.class_context_stack:
+            return self.class_context_stack[-1]
+        return None
+
     def _preserve_function_name(self, name):
         return name.startswith("__") and name.endswith("__")
+
+    def _estimated_short_name_length(self):
+        return 1
+
+    def _rename_savings(self, old_name, count):
+        return max(0, len(old_name) - self._estimated_short_name_length()) * count
+
+    def _public_class_alias_cost(self, old_name):
+        short_name = "a"
+        return sum(
+            len(statement)
+            for statement in (
+                f"{old_name}={short_name}",
+                f"{short_name}.__name__={old_name!r}",
+                f"{short_name}.__qualname__={old_name!r}",
+            )
+        )
+
+    def _public_member_alias_cost(self, old_name):
+        return len(f"{old_name}=a")
+
+    def _public_class_reference_count(self, node, old_name):
+        module = self._containing_module(node)
+        count = 1
+        if module is None:
+            return count
+        for current in ast.walk(module):
+            if isinstance(current, ast.Name) and current.id == old_name:
+                count += 1
+        return count
+
+    def _public_member_reference_count(self, class_node, class_name, member_name):
+        count = 1
+        for current in ast.walk(class_node):
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load) and current.id == member_name:
+                count += 1
+            elif (
+                isinstance(current, ast.Attribute)
+                and current.attr == member_name
+                and isinstance(current.value, ast.Name)
+                and current.value.id in {"self", "cls", class_name}
+            ):
+                count += 1
+        module = self._containing_module(class_node)
+        if module is not None:
+            for current in ast.walk(module):
+                if (
+                    isinstance(current, ast.Attribute)
+                    and current.attr == member_name
+                    and isinstance(current.value, ast.Name)
+                    and current.value.id == class_name
+                ):
+                    count += 1
+        return count
+
+    def _should_rename_public_class(self, node, old_name):
+        return self._rename_savings(
+            old_name,
+            self._public_class_reference_count(node, old_name),
+        ) > self._public_class_alias_cost(old_name)
+
+    def _should_rename_public_member(self, class_node, class_name, member_name):
+        return self._rename_savings(
+            member_name,
+            self._public_member_reference_count(class_node, class_name, member_name),
+        ) > self._public_member_alias_cost(member_name)
 
     def _is_method_definition(self, node):
         return isinstance(getattr(node, "parent", None), ast.ClassDef)
@@ -223,18 +307,18 @@ class VariableShortener(NodeTransformer):
                 names.update(self._binding_names_from_target(element))
         return names
 
-    def _rename_assignment_target(self, target):
+    def _rename_assignment_target(self, target, create_new=True):
         if isinstance(target, ast.Name):
-            if self._is_active_parameter_name(target.id):
+            if self._is_active_parameter_name(target.id) or self._preserve_function_name(target.id):
                 return
             if target.id in self.mapping:
                 target.id = self.mapping[target.id]
-            elif target.id not in self.mapping.values():
+            elif create_new and target.id not in self.mapping.values():
                 self.mapping[target.id] = target.id = next(self.generator)
             return
         if isinstance(target, (ast.Tuple, ast.List)):
             for element in target.elts:
-                self._rename_assignment_target(element)
+                self._rename_assignment_target(element, create_new=create_new)
 
     def _is_in_expression_scope(self, node):
         current = getattr(node, "parent", None)
@@ -393,19 +477,51 @@ class VariableShortener(NodeTransformer):
         >>> apply('class Demiurgic: pass\\nholy = Demiurgic()')
         'class Demiurgic:\\n    pass\\nholy = Demiurgic()'
         """
+        old_name = node.name
+        rename_public_class = False
         if self.keep_global_variables and self._is_node_global(node):
+            if (
+                len(node.name) > 1
+                and node.name not in self.mapping.values()
+                and self._should_rename_public_class(node, old_name)
+            ):
+                node.name = self._rename_identifier(old_name)
+                rename_public_class = old_name != node.name
+            class_context = {"old_name": old_name, "new_name": node.name, "aliases": [], "member_mapping": {}}
+            self.class_context_stack.append(class_context)
             self.scope_stack.append(self._scope_bindings(node))
             try:
-                return self.generic_visit(node)
+                node = self.generic_visit(node)
             finally:
                 self.scope_stack.pop()
+                self.class_context_stack.pop()
+            if class_context["member_mapping"]:
+                self.class_member_mappings[old_name] = dict(class_context["member_mapping"])
+                self.class_member_mappings[node.name] = dict(class_context["member_mapping"])
+            if class_context["aliases"]:
+                node.body.extend(class_context["aliases"])
+            if rename_public_class:
+                return [
+                    node,
+                    self._generated_assignment(f"{old_name} = {node.name}"),
+                    self._generated_assignment(f"{node.name}.__name__ = {old_name!r}"),
+                    self._generated_assignment(f"{node.name}.__qualname__ = {old_name!r}"),
+                ]
+            return node
         if node.name not in self.mapping.values():  # TODO: make .values() more efficient
             self.mapping[node.name] = node.name = next(self.generator)
+        class_context = {"old_name": old_name, "new_name": node.name, "aliases": [], "member_mapping": {}}
+        self.class_context_stack.append(class_context)
         self.scope_stack.append(self._scope_bindings(node))
         try:
-            return self.generic_visit(node)
+            node = self.generic_visit(node)
         finally:
             self.scope_stack.pop()
+            self.class_context_stack.pop()
+        if class_context["member_mapping"]:
+            self.class_member_mappings[old_name] = dict(class_context["member_mapping"])
+            self.class_member_mappings[node.name] = dict(class_context["member_mapping"])
+        return node
 
     def visit_FunctionDef(self, node):
         """Shorten function names.
@@ -424,7 +540,31 @@ class VariableShortener(NodeTransformer):
         >>> apply('def demiurgic(palpitation): return palpitation\\nholy = demiurgic()')
         'def a(palpitation):\\n    return palpitation\\nholy = a()\\ndemiurgic = a'
         """
-        if self._preserve_function_name(node.name) or self._is_method_definition(node):
+        if self._preserve_function_name(node.name):
+            self.scope_stack.append(self._scope_bindings(node))
+            try:
+                return self.generic_visit(node)
+            finally:
+                self.scope_stack.pop()
+        if self._is_method_definition(node):
+            class_context = self._current_class_context()
+            old_name = node.name
+            class_name = class_context["old_name"] if class_context is not None else ""
+            if (
+                len(old_name) > 1
+                and (
+                    not self.keep_global_variables
+                    or class_context is None
+                    or self._should_rename_public_member(node.parent, class_name, old_name)
+                )
+            ):
+                node.name = self._rename_identifier(old_name)
+            if class_context is not None and old_name != node.name:
+                class_context["member_mapping"][old_name] = node.name
+                if self.keep_global_variables:
+                    class_context["aliases"].append(
+                        self._generated_assignment(f"{old_name} = {node.name}")
+                    )
             self.scope_stack.append(self._scope_bindings(node))
             try:
                 return self.generic_visit(node)
@@ -464,8 +604,33 @@ class VariableShortener(NodeTransformer):
         if getattr(node, "_pymini_generated", False):
             return node
         if self.keep_global_variables and self._is_class_body_assignment(node):
+            class_context = self._current_class_context()
             for target in node.targets:
-                if not self._binding_names_from_target(target):
+                binding_names = self._binding_names_from_target(target)
+                if binding_names:
+                    for name in sorted(binding_names):
+                        if self._preserve_function_name(name):
+                            continue
+                        if (
+                            len(name) > 1
+                            and (
+                                not self.keep_global_variables
+                                or class_context is None
+                                or self._should_rename_public_member(
+                                    node.parent,
+                                    class_context["old_name"],
+                                    name,
+                                )
+                            )
+                        ):
+                            new_name = self._rename_identifier(name)
+                            if class_context is not None and name != new_name:
+                                class_context["member_mapping"][name] = new_name
+                                class_context["aliases"].append(
+                                    self._generated_assignment(f"{name} = {new_name}")
+                                )
+                    self._rename_assignment_target(target, create_new=False)
+                else:
                     self.visit(target)
             node.value = self.visit(node.value)
             return node
@@ -514,13 +679,30 @@ class VariableShortener(NodeTransformer):
 
     def visit_Call(self, node):
         """Apply renamed function names."""
-        # Leave obj.method(...) alone for now. Attribute renaming broke dynamic
-        # dispatch in real libraries and needs stronger type/owner analysis than
-        # this AST-local pass currently has.
         if isinstance(node.func, ast.Name):
             if node.func.id in self.mapping:
                 node.func.id = self.mapping[node.func.id]
         return self.generic_visit(node)
+
+    def visit_Attribute(self, node):
+        node.value = self.visit(node.value)
+        base_name = node.value.id if isinstance(node.value, ast.Name) else None
+        if base_name is None:
+            return node
+        attribute_mapping = None
+        class_context = self._current_class_context()
+        if class_context is not None and base_name in {
+            "self",
+            "cls",
+            class_context["old_name"],
+            class_context["new_name"],
+        }:
+            attribute_mapping = class_context["member_mapping"]
+        elif base_name in self.class_member_mappings:
+            attribute_mapping = self.class_member_mappings[base_name]
+        if attribute_mapping and node.attr in attribute_mapping:
+            node.attr = attribute_mapping[node.attr]
+        return node
 
     def visit_Name(self, node):
         """Apply renamed variables.
@@ -698,6 +880,15 @@ def _is_unsupported_hoisted_string_context(node):
     return False
 
 
+def _is_docstring_constant(node):
+    expr = getattr(node, "parent", None)
+    if not isinstance(expr, ast.Expr) or expr.value is not node:
+        return False
+    owner = getattr(expr, "parent", None)
+    body = getattr(owner, "body", None)
+    return bool(body) and body[0] is expr
+
+
 def _reserved_names_in_node(node):
     names = set()
     for current in ast.walk(node):
@@ -717,10 +908,6 @@ def _reserved_names_in_node(node):
 
 
 class RepeatedStringHoister(Transformer):
-    # Reintroduced in the narrowest safe form first: only hoist repeated string
-    # literals inside function bodies. Module and class scopes are still left
-    # alone because new bindings there change the public surface or class
-    # namespace more directly.
     def __init__(self, generator):
         super().__init__()
         self.generator = generator
@@ -741,31 +928,32 @@ class RepeatedStringCollector(ast.NodeVisitor):
         self.scope_stack = []
         self.repeated_strings_by_scope = {}
 
-    def visit_FunctionDef(self, node):
+    def _visit_scope(self, node):
         counts = {}
         self.scope_stack.append(counts)
         for statement in node.body:
             self.visit(statement)
         self.scope_stack.pop()
-        repeated = [
-            value
-            for value, count in counts.items()
-            if count > 1 and len(repr(value)) > 4
-        ]
-        if repeated:
-            self.repeated_strings_by_scope[id(node)] = repeated
+        if counts:
+            self.repeated_strings_by_scope[id(node)] = counts
+
+    def visit_Module(self, node):
+        self._visit_scope(node)
+
+    def visit_FunctionDef(self, node):
+        self._visit_scope(node)
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_ClassDef(self, node):
-        for statement in node.body:
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                self.visit(statement)
+        self._visit_scope(node)
 
     def visit_Constant(self, node):
         if not self.scope_stack or not isinstance(node.value, str):
             return
         if _is_unsupported_hoisted_string_context(node):
+            return
+        if _is_docstring_constant(node):
             return
         counts = self.scope_stack[-1]
         counts[node.value] = counts.get(node.value, 0) + 1
@@ -785,6 +973,32 @@ class RepeatedStringRewriter(ast.NodeTransformer):
                 reserved_names.add(candidate)
                 return candidate
 
+    def _is_profitable(self, value, count, scope_type):
+        literal_len = len(repr(value))
+        short_name_len = 1
+        original_cost = count * literal_len
+        helper_cost = short_name_len + 1 + literal_len
+        rewritten_cost = count * short_name_len
+        cleanup_cost = len("del(a,)") if scope_type in {"module", "class"} else 0
+        return original_cost > helper_cost + rewritten_cost + cleanup_cost
+
+    def _scope_mapping(self, node):
+        counts = self.repeated_strings_by_scope.get(id(node), {})
+        if not counts:
+            return {}
+        if isinstance(node, ast.Module):
+            scope_type = "module"
+        elif isinstance(node, ast.ClassDef):
+            scope_type = "class"
+        else:
+            scope_type = "function"
+        reserved_names = _reserved_names_in_node(node)
+        return {
+            value: self._next_safe_name(reserved_names)
+            for value, count in counts.items()
+            if count > 1 and len(repr(value)) > 4 and self._is_profitable(value, count, scope_type)
+        }
+
     def _prepend_assignments(self, body, mapping):
         assignments = []
         for value, name in mapping.items():
@@ -794,17 +1008,30 @@ class RepeatedStringRewriter(ast.NodeTransformer):
             )
             assignment._pymini_generated = True
             assignments.append(assignment)
-        return assignments + body
+        insert_at = 1 if body and ast.get_docstring(ast.Module(body=body, type_ignores=[])) is not None else 0
+        return body[:insert_at] + assignments + body[insert_at:]
+
+    def _append_cleanup(self, body, mapping):
+        if not mapping:
+            return body
+        cleanup = ast.Delete(
+            targets=[ast.Tuple(elts=[ast.Name(id=name, ctx=ast.Del()) for name in mapping.values()], ctx=ast.Del())],
+        )
+        cleanup._pymini_generated = True
+        return body + [cleanup]
+
+    def visit_Module(self, node):
+        mapping = self._scope_mapping(node)
+        self.scope_stack.append(mapping)
+        node.body = [self.visit(statement) for statement in node.body]
+        self.scope_stack.pop()
+        if mapping:
+            node.body = self._prepend_assignments(node.body, mapping)
+            node.body = self._append_cleanup(node.body, mapping)
+        return node
 
     def visit_FunctionDef(self, node):
-        mapping = {}
-        repeated = self.repeated_strings_by_scope.get(id(node), ())
-        if repeated:
-            reserved_names = _reserved_names_in_node(node)
-            mapping = {
-                value: self._next_safe_name(reserved_names)
-                for value in repeated
-            }
+        mapping = self._scope_mapping(node)
         self.scope_stack.append(mapping)
         node.body = [self.visit(statement) for statement in node.body]
         self.scope_stack.pop()
@@ -815,13 +1042,13 @@ class RepeatedStringRewriter(ast.NodeTransformer):
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_ClassDef(self, node):
-        updated_body = []
-        for statement in node.body:
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                updated_body.append(self.visit(statement))
-            else:
-                updated_body.append(statement)
-        node.body = updated_body
+        mapping = self._scope_mapping(node)
+        self.scope_stack.append(mapping)
+        node.body = [self.visit(statement) for statement in node.body]
+        self.scope_stack.pop()
+        if mapping:
+            node.body = self._prepend_assignments(node.body, mapping)
+            node.body = self._append_cleanup(node.body, mapping)
         return node
 
     def visit_Assign(self, node):
@@ -834,10 +1061,200 @@ class RepeatedStringRewriter(ast.NodeTransformer):
             return node
         if _is_unsupported_hoisted_string_context(node):
             return node
+        if _is_docstring_constant(node):
+            return node
         mapping = self.scope_stack[-1]
         if node.value not in mapping:
             return node
         return ast.copy_location(ast.Name(id=mapping[node.value], ctx=ast.Load()), node)
+
+
+def _is_terminal_statement(node):
+    return isinstance(node, (ast.Return, ast.Raise, ast.Continue, ast.Break))
+
+
+class RepeatedNameAliaser(ast.NodeTransformer):
+    def __init__(self, generator):
+        super().__init__()
+        self.generator = generator
+
+    def transform(self, *trees):
+        for tree in trees:
+            ParentSetter().visit(tree)
+            self.visit(tree)
+            ParentSetter().visit(tree)
+            ast.fix_missing_locations(tree)
+        return trees
+
+    def _next_safe_name(self, reserved_names):
+        while True:
+            candidate = next(self.generator)
+            if candidate not in reserved_names:
+                reserved_names.add(candidate)
+                return candidate
+
+    def _alias_assignment(self, mapping):
+        names = list(mapping)
+        aliases = list(mapping.values())
+        if len(names) == 1:
+            node = ast.Assign(
+                targets=[ast.Name(id=aliases[0], ctx=ast.Store())],
+                value=ast.Name(id=names[0], ctx=ast.Load()),
+            )
+        else:
+            node = ast.Assign(
+                targets=[ast.Tuple(elts=[ast.Name(id=alias, ctx=ast.Store()) for alias in aliases], ctx=ast.Store())],
+                value=ast.Tuple(elts=[ast.Name(id=name, ctx=ast.Load()) for name in names], ctx=ast.Load()),
+            )
+        node._pymini_generated = True
+        return node
+
+    def _cleanup(self, mapping):
+        node = ast.Delete(
+            targets=[ast.Tuple(elts=[ast.Name(id=alias, ctx=ast.Del()) for alias in mapping.values()], ctx=ast.Del())],
+        )
+        node._pymini_generated = True
+        return node
+
+    def _rewrite_body(self, body):
+        rewritten = []
+        for statement in body:
+            statement = self.visit(statement)
+            mapping = RepeatedNameCollector.for_statement(statement, self._next_safe_name)
+            if not mapping:
+                rewritten.append(statement)
+                continue
+            rewritten_statement = RepeatedNameRewriter(mapping).visit(statement)
+            rewritten.append(self._alias_assignment(mapping))
+            rewritten.append(rewritten_statement)
+            if not _is_terminal_statement(statement):
+                rewritten.append(self._cleanup(mapping))
+        return rewritten
+
+    def visit_Module(self, node):
+        node.body = self._rewrite_body(node.body)
+        return node
+
+    def visit_FunctionDef(self, node):
+        node.body = self._rewrite_body(node.body)
+        return node
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node):
+        node.body = self._rewrite_body(node.body)
+        return node
+
+
+class RepeatedNameCollector(ast.NodeVisitor):
+    def __init__(self):
+        self.counts = {}
+        self.bindings = set()
+
+    @classmethod
+    def for_statement(cls, statement, allocator):
+        collector = cls()
+        collector.visit(statement)
+        repeated = [
+            name
+            for name, count in collector.counts.items()
+            if count > 1 and len(name) > 1 and name not in collector.bindings
+        ]
+        if not repeated:
+            return {}
+        reserved_names = _reserved_names_in_node(statement)
+        return {
+            name: allocator(reserved_names)
+            for name in repeated
+        }
+
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Load):
+            self.counts[node.id] = self.counts.get(node.id, 0) + 1
+        elif isinstance(node.ctx, ast.Store):
+            self.bindings.add(node.id)
+
+    def visit_arg(self, node):
+        self.bindings.add(node.arg)
+
+    def visit_Global(self, node):
+        self.bindings.update(node.names)
+
+    visit_Nonlocal = visit_Global
+
+    def visit_ExceptHandler(self, node):
+        if node.name:
+            self.bindings.add(node.name)
+        if node.type is not None:
+            self.visit(node.type)
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_Import(self, node):
+        for alias in node.names:
+            self.bindings.add(alias.asname or alias.name.split(".", 1)[0])
+
+    def visit_ImportFrom(self, node):
+        for alias in node.names:
+            if alias.name != "*":
+                self.bindings.add(alias.asname or alias.name)
+
+    def visit_FunctionDef(self, node):
+        self.bindings.add(node.name)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node):
+        self.bindings.add(node.name)
+
+    def visit_Lambda(self, node):
+        return node
+
+    def visit_ListComp(self, node):
+        return node
+
+    def visit_SetComp(self, node):
+        return node
+
+    def visit_DictComp(self, node):
+        return node
+
+    def visit_GeneratorExp(self, node):
+        return node
+
+
+class RepeatedNameRewriter(ast.NodeTransformer):
+    def __init__(self, mapping):
+        super().__init__()
+        self.mapping = mapping
+
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Load) and node.id in self.mapping:
+            node.id = self.mapping[node.id]
+        return node
+
+    def visit_FunctionDef(self, node):
+        return node
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node):
+        return node
+
+    def visit_Lambda(self, node):
+        return node
+
+    def visit_ListComp(self, node):
+        return node
+
+    def visit_SetComp(self, node):
+        return node
+
+    def visit_DictComp(self, node):
+        return node
+
+    def visit_GeneratorExp(self, node):
+        return node
 
 
 class ImportedVariableShortener(VariableShortener):
@@ -1301,6 +1718,7 @@ def minify(sources, modules='main', keep_module_names=False,
             keep_module_names=keep_module_names,
         ),  # obfuscate across files
         RepeatedStringHoister(ind.generator),
+        RepeatedNameAliaser(ind.generator),
 
         # optionally fuse files
         fuser := (
