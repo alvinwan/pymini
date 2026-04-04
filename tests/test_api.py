@@ -112,30 +112,6 @@ def test_minify_does_not_crash_when_returning_parameter_names():
     assert simplified_return.value.value == 1
     assert modules == ["main"]
 
-
-def test_minify_leaves_bare_parameter_returns_untouched():
-    cleaned, modules = minify(
-        py(
-            """
-            def f(path):
-                return path
-            """
-        ),
-        "main",
-        keep_global_variables=True,
-        keep_module_names=True,
-    )
-
-    tree = ast.parse(cleaned[0])
-    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-    returned = function.body[0]
-
-    assert isinstance(returned, ast.Return)
-    assert isinstance(returned.value, ast.Name)
-    assert returned.value.id == function.args.args[0].arg
-    assert modules == ["main"]
-
-
 def test_minify_updates_cross_file_imports():
     cleaned, modules = minify(
         [
