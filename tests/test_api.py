@@ -1,4 +1,6 @@
 import ast
+import subprocess
+import sys
 from textwrap import dedent
 
 from pymini import minify
@@ -45,18 +47,6 @@ def assert_bundle_preserves_public_alias(bundle_source: str) -> None:
     assert isinstance(alias, ast.Assign)
     assert alias.targets[0].id == "square"
     assert alias.value.id == function.name
-
-    call = printer.value
-    assert call.args[0].func.id == function.name
-
-
-def assert_bundle_is_shortened(bundle_source: str) -> None:
-    bundle_tree = ast.parse(bundle_source)
-    function, printer = bundle_tree.body
-
-    assert isinstance(function, ast.FunctionDef)
-    assert function.name != "square"
-    assert len(function.name) == 1
 
     call = printer.value
     assert call.args[0].func.id == function.name
@@ -112,6 +102,39 @@ def test_minify_does_not_crash_when_returning_parameter_names():
     assert simplified_return.value.value == 1
     assert modules == ["main"]
 
+
+def test_minify_preserves_global_names_without_breaking_shadowed_locals(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            x = 1
+
+            def f():
+                x = 2
+                return x
+
+            print(f(), x)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "2 1\n"
+    assert modules == ["main"]
+
+
 def test_minify_updates_cross_file_imports():
     cleaned, modules = minify(
         [
@@ -166,7 +189,7 @@ def test_minify_preserves_public_names_when_requested():
     assert modules == ["main", "side"]
 
 
-def test_minify_fuses_files_into_single_module():
+def test_minify_fuses_files_into_single_module(tmp_path):
     cleaned, modules = minify(
         [
             py(
@@ -187,5 +210,43 @@ def test_minify_fuses_files_into_single_module():
         output_single_file=True,
     )
 
-    assert_bundle_is_shortened(cleaned[0])
+    bundle_path = tmp_path / "bundle.py"
+    bundle_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(bundle_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "9\n"
+    assert modules == ["bundle"]
+
+
+def test_minify_bundle_runs_entry_module_as_main(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            if __name__ == "__main__":
+                print("ran")
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+        output_single_file=True,
+    )
+
+    bundle_path = tmp_path / "bundle.py"
+    bundle_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(bundle_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "ran\n"
     assert modules == ["bundle"]

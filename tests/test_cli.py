@@ -1,8 +1,10 @@
 import ast
+import os
 import subprocess
 import sys
 from pathlib import Path
 from textwrap import dedent
+from typing import Optional
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +14,31 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "pymini", *args],
         cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def run_python(code: str, *, pythonpath: Optional[Path] = None, cwd: Optional[Path] = None) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    if pythonpath is not None:
+        existing = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = str(pythonpath) if not existing else f"{pythonpath}{os.pathsep}{existing}"
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=cwd or PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def run_python_file(path: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(path)],
+        cwd=path.parent,
         capture_output=True,
         text=True,
         check=False,
@@ -50,22 +77,6 @@ def assert_public_api_is_preserved(module_source: str, consumer_source: str) -> 
     call = printer.value
     assert call.args[0].id == "PI"
     assert call.args[1].func.id == function.name
-
-
-def assert_bundle_preserves_public_alias(bundle_source: str) -> None:
-    bundle_tree = ast.parse(bundle_source)
-    function, alias, printer = bundle_tree.body
-
-    assert isinstance(function, ast.FunctionDef)
-    assert function.name != "square"
-    assert len(function.name) == 1
-
-    assert isinstance(alias, ast.Assign)
-    assert alias.targets[0].id == "square"
-    assert alias.value.id == function.name
-
-    call = printer.value
-    assert call.args[0].func.id == function.name
 
 
 def test_cli_accepts_directories(tmp_path):
@@ -127,7 +138,9 @@ def test_cli_can_write_single_file_output(tmp_path):
     result = run_cli("bundle", str(source_dir), "-o", str(bundle_path))
 
     assert result.returncode == 0, result.stderr
-    assert_bundle_preserves_public_alias(bundle_path.read_text(encoding="utf-8"))
+    execution = run_python_file(bundle_path)
+    assert execution.returncode == 0, execution.stderr
+    assert execution.stdout == "9\n"
 
 
 def test_cli_preserves_nested_package_paths(tmp_path):
@@ -214,3 +227,129 @@ def test_cli_can_aggressively_rename_globals_in_package_mode(tmp_path):
     assert isinstance(assignment, ast.Assign)
     assert assignment.targets[0].id != "public_name"
     assert len(assignment.targets[0].id) == 1
+
+
+def test_cli_package_mode_supports_relative_star_reexports(tmp_path):
+    source_dir = tmp_path / "src"
+    output_dir = tmp_path / "out"
+    pkg_dir = source_dir / "pkg"
+    pkg_dir.mkdir(parents=True)
+
+    write_py(
+        pkg_dir / "__init__.py",
+        """
+        from .helpers import *
+
+        __all__ = ["greet"]
+        """,
+    )
+    write_py(
+        pkg_dir / "helpers.py",
+        """
+        def greet():
+            return "hello"
+        """,
+    )
+    write_py(
+        source_dir / "app.py",
+        """
+        from pkg import greet
+
+        print(greet())
+        """,
+    )
+
+    result = run_cli("package", str(source_dir), "-o", str(output_dir))
+
+    assert result.returncode == 0, result.stderr
+    execution = run_python("import app", pythonpath=output_dir, cwd=tmp_path)
+    assert execution.returncode == 0, execution.stderr
+    assert execution.stdout == "hello\n"
+
+
+def test_cli_package_mode_supports_dotted_and_dynamic_imports(tmp_path):
+    source_dir = tmp_path / "src"
+    output_dir = tmp_path / "out"
+    pkg_dir = source_dir / "pkg"
+    pkg_dir.mkdir(parents=True)
+
+    write_py(pkg_dir / "__init__.py", "VALUE = 1")
+    write_py(
+        pkg_dir / "helpers.py",
+        """
+        def greet():
+            return "hello"
+        """,
+    )
+    write_py(
+        source_dir / "app.py",
+        """
+        import importlib
+        import pkg.helpers
+
+        print(pkg.helpers.greet(), importlib.import_module("pkg.helpers").greet())
+        """,
+    )
+
+    result = run_cli("package", str(source_dir), "-o", str(output_dir))
+
+    assert result.returncode == 0, result.stderr
+    execution = run_python("import app", pythonpath=output_dir, cwd=tmp_path)
+    assert execution.returncode == 0, execution.stderr
+    assert execution.stdout == "hello hello\n"
+
+
+def test_cli_bundle_mode_supports_complex_package_graphs(tmp_path):
+    source_dir = tmp_path / "src"
+    bundle_path = tmp_path / "bundle.py"
+    pkg_dir = source_dir / "pkg"
+    pkg_dir.mkdir(parents=True)
+
+    write_py(
+        pkg_dir / "__init__.py",
+        """
+        EVENTS = ["pkg"]
+
+        from .shared import register
+        from .helpers import *
+
+        register(EVENTS)
+        __all__ = ["EVENTS", "greet"]
+        """,
+    )
+    write_py(
+        pkg_dir / "shared.py",
+        """
+        def register(events):
+            events.append("shared")
+
+        def label():
+            return "hello"
+        """,
+    )
+    write_py(
+        pkg_dir / "helpers.py",
+        """
+        from .shared import label
+
+        def greet():
+            return label()
+        """,
+    )
+    write_py(
+        source_dir / "app.py",
+        """
+        from pkg import *
+        import importlib
+        import pkg.helpers
+
+        print(",".join(EVENTS), greet(), pkg.helpers.greet(), importlib.import_module("pkg.shared").label())
+        """,
+    )
+
+    result = run_cli("bundle", str(source_dir), "-o", str(bundle_path))
+
+    assert result.returncode == 0, result.stderr
+    execution = run_python_file(bundle_path)
+    assert execution.returncode == 0, execution.stderr
+    assert execution.stdout == "pkg,shared hello hello hello\n"
