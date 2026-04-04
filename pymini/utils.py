@@ -1,3 +1,4 @@
+import keyword
 from typing import List, Optional, Set
 
 
@@ -47,6 +48,6 @@ def variable_name_generator(used: Optional[Set[str]] = None):
         for i, digit in enumerate(number_to_digits(cur, base=52)[::-1]):
             base = 'a' if digit < 26 else 'A'
             name = chr(ord(base) + ((digit % 26) - (i > 0))) + name  # for 1st digit, a = 0. for subsequent, a = 1
-        if name not in used:
+        if name not in used and not keyword.iskeyword(name):
             yield name
         cur += 1
