@@ -160,6 +160,79 @@ def test_variable_name_generator_skips_python_keywords():
     assert all(not keyword.iskeyword(name) for name in names)
 
 
+def test_minify_hoists_repeated_strings_inside_functions(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def f():
+                return {
+                    "left": "PhysicalResourceId",
+                    "right": "PhysicalResourceId",
+                }
+
+            print(f()["left"], f()["right"])
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    tree = ast.parse(cleaned[0])
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    helper = function.body[0]
+
+    assert isinstance(helper, ast.Assign)
+    assert isinstance(helper.value, ast.Constant)
+    assert helper.value.value == "PhysicalResourceId"
+    assert cleaned[0].count("PhysicalResourceId") == 1
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "PhysicalResourceId PhysicalResourceId\n"
+    assert modules == ["main"]
+
+
+def test_minify_does_not_hoist_repeated_strings_into_class_bodies(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Token:
+                left = "PhysicalResourceId"
+                right = "PhysicalResourceId"
+
+            print(Token.left, Token.right)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    assert cleaned[0].count("PhysicalResourceId") == 2
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "PhysicalResourceId PhysicalResourceId\n"
+    assert modules == ["main"]
+
+
 def test_minify_preserves_global_names_without_breaking_shadowed_locals(tmp_path):
     cleaned, modules = minify(
         py(

@@ -165,7 +165,8 @@ class VariableShortener(NodeTransformer):
     # Deferred optimizations intentionally left off after validating against
     # TexSoup and similar package-shaped inputs:
     # - aliasing repeated name reads into generated locals
-    # - hoisting repeated string literals into generated locals
+    # - hoisting repeated string literals into generated locals at module or
+    #   class scope
     # - renaming attribute call sites such as obj.method(...)
     # - renaming methods, class-body attributes, and top-level class names in
     #   preserve-public-API mode
@@ -667,6 +668,144 @@ class FusedVariableShortener(Transformer):
         return new_trees
 
 
+def _is_unsupported_hoisted_string_context(node):
+    current = node
+    pattern_nodes = (
+        ast.MatchValue,
+        ast.MatchSingleton,
+        ast.MatchSequence,
+        ast.MatchMapping,
+        ast.MatchClass,
+        ast.MatchAs,
+        ast.MatchOr,
+    )
+    while hasattr(current, "parent"):
+        parent = current.parent
+        if isinstance(parent, (ast.JoinedStr, *pattern_nodes)):
+            return True
+        if isinstance(parent, ast.arg) and parent.annotation is current:
+            return True
+        if isinstance(parent, ast.AnnAssign) and parent.annotation is current:
+            return True
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)) and parent.returns is current:
+            return True
+        current = parent
+    return False
+
+
+class RepeatedStringHoister(Transformer):
+    # Reintroduced in the narrowest safe form first: only hoist repeated string
+    # literals inside function bodies. Module and class scopes are still left
+    # alone because new bindings there change the public surface or class
+    # namespace more directly.
+    def __init__(self, generator):
+        super().__init__()
+        self.generator = generator
+
+    def transform(self, *trees):
+        for tree in trees:
+            ParentSetter().visit(tree)
+            collector = RepeatedStringCollector()
+            collector.visit(tree)
+            RepeatedStringRewriter(self.generator, collector.repeated_strings_by_scope).visit(tree)
+            ParentSetter().visit(tree)
+            ast.fix_missing_locations(tree)
+        return trees
+
+
+class RepeatedStringCollector(ast.NodeVisitor):
+    def __init__(self):
+        self.scope_stack = []
+        self.repeated_strings_by_scope = {}
+
+    def visit_FunctionDef(self, node):
+        counts = {}
+        self.scope_stack.append(counts)
+        for statement in node.body:
+            self.visit(statement)
+        self.scope_stack.pop()
+        repeated = [
+            value
+            for value, count in counts.items()
+            if count > 1 and len(repr(value)) > 4
+        ]
+        if repeated:
+            self.repeated_strings_by_scope[id(node)] = repeated
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node):
+        for statement in node.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                self.visit(statement)
+
+    def visit_Constant(self, node):
+        if not self.scope_stack or not isinstance(node.value, str):
+            return
+        if _is_unsupported_hoisted_string_context(node):
+            return
+        counts = self.scope_stack[-1]
+        counts[node.value] = counts.get(node.value, 0) + 1
+
+
+class RepeatedStringRewriter(ast.NodeTransformer):
+    def __init__(self, generator, repeated_strings_by_scope):
+        super().__init__()
+        self.generator = generator
+        self.repeated_strings_by_scope = repeated_strings_by_scope
+        self.scope_stack = []
+
+    def _prepend_assignments(self, body, mapping):
+        assignments = []
+        for value, name in mapping.items():
+            assignment = ast.Assign(
+                targets=[ast.Name(id=name, ctx=ast.Store())],
+                value=ast.Constant(value=value),
+            )
+            assignment._pymini_generated = True
+            assignments.append(assignment)
+        return assignments + body
+
+    def visit_FunctionDef(self, node):
+        mapping = {}
+        repeated = self.repeated_strings_by_scope.get(id(node), ())
+        if repeated:
+            mapping = {value: next(self.generator) for value in repeated}
+        self.scope_stack.append(mapping)
+        node.body = [self.visit(statement) for statement in node.body]
+        self.scope_stack.pop()
+        if mapping:
+            node.body = self._prepend_assignments(node.body, mapping)
+        return node
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node):
+        updated_body = []
+        for statement in node.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                updated_body.append(self.visit(statement))
+            else:
+                updated_body.append(statement)
+        node.body = updated_body
+        return node
+
+    def visit_Assign(self, node):
+        if getattr(node, "_pymini_generated", False):
+            return node
+        return self.generic_visit(node)
+
+    def visit_Constant(self, node):
+        if not self.scope_stack or not isinstance(node.value, str):
+            return node
+        if _is_unsupported_hoisted_string_context(node):
+            return node
+        mapping = self.scope_stack[-1]
+        if node.value not in mapping:
+            return node
+        return ast.copy_location(ast.Name(id=mapping[node.value], ctx=ast.Load()), node)
+
+
 class ImportedVariableShortener(VariableShortener):
     """Use different module shorteners to adjust variables in this module
     
@@ -1127,6 +1266,7 @@ def minify(sources, modules='main', keep_module_names=False,
             modules=ind.modules,
             keep_module_names=keep_module_names,
         ),  # obfuscate across files
+        RepeatedStringHoister(ind.generator),
 
         # optionally fuse files
         fuser := (
