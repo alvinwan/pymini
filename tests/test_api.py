@@ -1,4 +1,5 @@
 import ast
+import importlib.util
 import keyword
 import subprocess
 import sys
@@ -138,13 +139,18 @@ def test_minify_does_not_crash_when_returning_parameter_names():
 
     tree = ast.parse(cleaned[0])
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-    condition = function.body[0]
-    simplified_return = function.body[1]
+    condition = next(node for node in function.body if isinstance(node, ast.If))
+    simplified_return = next(
+        node
+        for node in function.body
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Constant)
+    )
 
     assert isinstance(condition, ast.If)
+    assert isinstance(condition.test, ast.Name)
     assert isinstance(condition.body[0], ast.Return)
     assert isinstance(condition.body[0].value, ast.Name)
-    assert condition.body[0].value.id == function.args.args[0].arg
+    assert condition.body[0].value.id == condition.test.id
 
     assert isinstance(simplified_return, ast.Return)
     assert isinstance(simplified_return.value, ast.Constant)
@@ -201,15 +207,14 @@ def test_minify_hoists_repeated_strings_inside_functions(tmp_path):
     assert modules == ["main"]
 
 
-def test_minify_does_not_hoist_repeated_strings_into_class_bodies(tmp_path):
+def test_minify_hoists_repeated_strings_at_module_scope_without_leaking_helpers(tmp_path):
     cleaned, modules = minify(
         py(
             """
-            class Token:
-                left = "PhysicalResourceId"
-                right = "PhysicalResourceId"
+            left = "PhysicalResourceId"
+            right = "PhysicalResourceId"
 
-            print(Token.left, Token.right)
+            print(left, right)
             """
         ),
         "main",
@@ -217,7 +222,43 @@ def test_minify_does_not_hoist_repeated_strings_into_class_bodies(tmp_path):
         keep_module_names=True,
     )
 
-    assert cleaned[0].count("PhysicalResourceId") == 2
+    tree = ast.parse(cleaned[0])
+
+    assert cleaned[0].count("PhysicalResourceId") == 1
+    assert any(isinstance(node, ast.Delete) for node in tree.body)
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("module_under_test", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    assert [
+        name
+        for name in module.__dict__
+        if len(name) == 1 and not name.startswith("_")
+    ] == []
+    assert modules == ["main"]
+
+
+def test_minify_skips_unprofitable_short_string_hoists_at_module_scope(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            left = "Foo"
+            right = "Foo"
+
+            print(left, right)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    assert cleaned[0].count("'Foo'") == 2
+    assert "del(" not in cleaned[0]
 
     module_path = tmp_path / "module.py"
     module_path.write_text(cleaned[0], encoding="utf-8")
@@ -229,7 +270,43 @@ def test_minify_does_not_hoist_repeated_strings_into_class_bodies(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "PhysicalResourceId PhysicalResourceId\n"
+    assert result.stdout == "Foo Foo\n"
+    assert modules == ["main"]
+
+
+def test_minify_hoists_repeated_strings_into_class_bodies_without_leaking_helpers(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Token:
+                x = "PhysicalResourceId"
+                y = "PhysicalResourceId"
+
+            print(Token.x, Token.y, [name for name in Token.__dict__ if len(name) == 1 and name not in {"x", "y"}])
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    tree = ast.parse(cleaned[0])
+    class_def = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+
+    assert cleaned[0].count("PhysicalResourceId") == 1
+    assert any(isinstance(node, ast.Delete) for node in class_def.body)
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "PhysicalResourceId PhysicalResourceId []\n"
     assert modules == ["main"]
 
 
@@ -289,6 +366,77 @@ def test_minify_hoisted_strings_do_not_conflict_with_global_declarations(tmp_pat
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "('hello', 'hello')\n"
+    assert modules == ["main"]
+
+
+def test_minify_aliases_repeated_names_within_single_statements(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            IMPORTANT_PUBLIC_NAME = 3
+
+            def show():
+                print(IMPORTANT_PUBLIC_NAME, IMPORTANT_PUBLIC_NAME)
+                print("helpers", sorted(name for name in locals() if len(name) == 1))
+
+            show()
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    tree = ast.parse(cleaned[0])
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+
+    assert any(isinstance(node, ast.Assign) for node in function.body)
+    assert any(isinstance(node, ast.Delete) for node in function.body)
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "3 3\nhelpers []\n"
+    assert modules == ["main"]
+
+
+def test_minify_aliases_repeated_module_names_without_leaking_helpers(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            IMPORTANT_PUBLIC_NAME = 3
+            print(IMPORTANT_PUBLIC_NAME, IMPORTANT_PUBLIC_NAME)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    tree = ast.parse(cleaned[0])
+
+    assert any(isinstance(node, ast.Assign) for node in tree.body)
+    assert any(isinstance(node, ast.Delete) for node in tree.body)
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("aliased_module_under_test", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    assert [
+        name
+        for name in module.__dict__
+        if len(name) == 1 and not name.startswith("_")
+    ] == []
     assert modules == ["main"]
 
 
@@ -518,6 +666,84 @@ def test_minify_preserves_decorated_method_names(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "2\n"
+    assert modules == ["main"]
+
+
+def test_minify_rewrites_known_class_method_calls(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Token:
+                def very_long_method_name(self):
+                    return 1
+
+                def call(self):
+                    return self.very_long_method_name()
+
+            print(Token().call(), Token().very_long_method_name())
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    assert "self.very_long_method_name(" not in cleaned[0]
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1 1\n"
+    assert modules == ["main"]
+
+
+def test_minify_skips_unprofitable_public_class_and_method_aliases(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Foo(object):
+                def __init__(self, *args):
+                    pass
+
+                def demiurgic_mystificator(self, dactyl):
+                    return dactyl
+
+                def test(self, whatever):
+                    print(whatever)
+
+            if __name__ == "__main__":
+                f = Foo("epicaricacy", "perseverate")
+                f.test("Codswallop")
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    assert "Foo=" not in cleaned[0]
+    assert "__qualname__" not in cleaned[0]
+    assert "demiurgic_mystificator=" not in cleaned[0]
+    assert "test=" not in cleaned[0]
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "Codswallop\n"
     assert modules == ["main"]
 
 
