@@ -1,6 +1,7 @@
 import ast
 import keyword
-from typing import Dict, List, Set
+from graphlib import TopologicalSorter
+from typing import Dict, List, Optional, Set
 from .utils import variable_name_generator
 
 
@@ -157,7 +158,7 @@ class VariableShortener(NodeTransformer):
         # TODO: cleanup
         self.str_name_to_node = {}
         self.str_mapping = {}
-        self.modules = modules # dont alias variables imported from these modules
+        self.modules = set(modules)  # don't alias variables imported from these modules
         self.keep_global_variables = keep_global_variables
 
     def _is_node_global(self, node):
@@ -322,28 +323,28 @@ class VariableShortener(NodeTransformer):
         if c in a:
             print(a)
         """
-        if not isinstance(node.s, str):  # TODO: generic for all constants?
+        if not isinstance(node.value, str):  # TODO: generic for all constants?
             return node
+        string_value = node.value
         # TODO: this is a copy of visit_Name, basically
-        if node.s in self.str_mapping.values():  # TODO: make more efficient
+        if string_value in self.str_mapping.values():  # TODO: make more efficient
             return node
-        if node.s in self.str_mapping:
-            node = ast.parse(self.str_mapping[node.s]).body[0].value
-        elif node.s in self.str_name_to_node:
-            old_s = node.s
-            self.str_mapping[node.s] = new_variable_name = next(self.generator)
-            self.nodes_to_insert.append(ast.parse(f"{new_variable_name} = '{node.s}'").body[0])
-            old_node = self.str_name_to_node[node.s]
+        if string_value in self.str_mapping:
+            node = ast.parse(self.str_mapping[string_value]).body[0].value
+        elif string_value in self.str_name_to_node:
+            self.str_mapping[string_value] = new_variable_name = next(self.generator)
+            self.nodes_to_insert.append(ast.parse(f"{new_variable_name} = {string_value!r}").body[0])
+            old_node = self.str_name_to_node[string_value]
             # TODO: instead of writing all these cases, replace in a second pass?
             if hasattr(old_node, 'parent'):
                 if isinstance(old_node.parent, ast.Assign):
-                    old_node.parent.value = ast.parse(self.str_mapping[node.s]).body[0].value
+                    old_node.parent.value = ast.parse(self.str_mapping[string_value]).body[0].value
                 if isinstance(old_node.parent, ast.Subscript):
-                    old_node.parent.slice = ast.parse(self.str_mapping[node.s]).body[0].value
-            node = ast.parse(self.str_mapping[node.s]).body[0].value
-            del self.str_name_to_node[old_s]
+                    old_node.parent.slice = ast.parse(self.str_mapping[string_value]).body[0].value
+            node = ast.parse(self.str_mapping[string_value]).body[0].value
+            del self.str_name_to_node[string_value]
         else:
-            self.str_name_to_node[node.s] = node
+            self.str_name_to_node[string_value] = node
         return node
 
 
@@ -375,12 +376,12 @@ class FusedVariableShortener(Transformer):
     >>> fused = FusedVariableShortener(variable_name_generator(), ('donotrenameme',), {}, keep_module_names=True)
     >>> _ = fused.transform(None)
     >>> fused.modules
-    ('donotrenameme',)
+    ['donotrenameme']
     """
     def __init__(self, generator, modules, module_to_shortener, keep_module_names=False):
         super().__init__()
         self.generator = generator
-        self.modules = modules
+        self.modules = list(modules)
         self.module_to_shortener = module_to_shortener
         self.keep_module_names = keep_module_names
 
@@ -431,10 +432,10 @@ class ImportedVariableShortener(VariableShortener):
     >>> apply('from silly import demiurgic, dontreplaceme; print(demiurgic)')
     'from silly import a, dontreplaceme\\nprint(a)'
     """
-    def __init__(self, *args, module_to_shortener={}, module_to_module={}, **kwargs):
+    def __init__(self, *args, module_to_shortener=None, module_to_module=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.module_to_shortener = module_to_shortener
-        self.module_to_module = module_to_module
+        self.module_to_shortener = module_to_shortener or {}
+        self.module_to_module = module_to_module or {}
 
     def visit_ImportFrom(self, node):
         """Apply shortener for imported module."""
@@ -463,11 +464,56 @@ class FileFuser(Fuser):
     Determine dependency between files by checking import statements. After
     linearizing dependencies, combine files in that order.
     """
+    def _dependencies_for_tree(self, tree, modules):
+        dependencies = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module in modules:
+                dependencies.add(node.module)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    module = alias.name.split('.')[0]
+                    if module in modules:
+                        dependencies.add(module)
+        return dependencies
+
+    def _module_order(self, module_to_tree):
+        sorter = TopologicalSorter()
+        modules = set(module_to_tree)
+        for module, tree in module_to_tree.items():
+            dependencies = self._dependencies_for_tree(tree, modules - {module})
+            sorter.add(module, *dependencies)
+        return list(sorter.static_order())
+
+    def _strip_internal_imports(self, tree, modules):
+        filtered_body = []
+        for statement in tree.body:
+            if isinstance(statement, ast.ImportFrom) and statement.level == 0 and statement.module in modules:
+                continue
+            if isinstance(statement, ast.Import):
+                statement.names = [
+                    alias for alias in statement.names
+                    if alias.name.split('.')[0] not in modules
+                ]
+                if not statement.names:
+                    continue
+            filtered_body.append(statement)
+        tree.body = filtered_body
+        return tree
+
     def transform(self, *trees):
-        # TODO: find imports and use them to determine file ordering
-        for tree in trees[1:]:
-            trees[0].body += tree.body
-        return [trees[0]]
+        module_to_tree = dict(zip(self.modules, trees))
+        module_order = self._module_order(module_to_tree)
+        internal_modules = set(module_order)
+
+        combined_body = []
+        for module in module_order:
+            tree = self._strip_internal_imports(module_to_tree[module], internal_modules)
+            combined_body.extend(tree.body)
+
+        root = module_to_tree[module_order[0]]
+        root.body = combined_body
+        ast.fix_missing_locations(root)
+        return [root]
 
 
 def define_custom_variables(tree, mapping):
@@ -695,10 +741,11 @@ class WhitespaceRemover(NodeTransformer):
 
 
 def minify(sources, modules='main', keep_module_names=False,
-           keep_global_variables=False, output_single_file=False,):
+           keep_global_variables=False, output_single_file=False,
+           single_file_module='bundle'):
     """Uglify source code. Simplify, minify, and obfuscate.
 
-    >>> sources, modules = uglipy(['''a = 3
+    >>> sources, modules = minify(['''a = 3
     ... def square(x):
     ...     return x ** 2
     ... ''', '''from main import square
@@ -713,8 +760,12 @@ def minify(sources, modules='main', keep_module_names=False,
     """
     if isinstance(sources, str):
         sources = [sources]
+    else:
+        sources = list(sources)
     if isinstance(modules, str):
         modules = [modules]
+    else:
+        modules = list(modules)
 
     assert len(sources) == len(modules)
 
@@ -756,4 +807,5 @@ def minify(sources, modules='main', keep_module_names=False,
     )
     cleaned = list(pipeline.transform(*trees))
 
-    return cleaned, fuser.modules
+    output_modules = [single_file_module] if output_single_file else fuser.modules
+    return cleaned, output_modules
