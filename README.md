@@ -1,6 +1,6 @@
 # pymini
 
-`pymini` minifies Python source code by simplifying syntax, shortening identifiers, and stripping unnecessary whitespace. It supports single-file input and small groups of related modules.
+`pymini` minifies Python source code by simplifying syntax, shortening identifiers, and stripping unnecessary whitespace. Its primary multi-file workflow preserves package structure; one-file bundling is available as an explicit opt-in.
 
 ## Status
 
@@ -14,25 +14,31 @@ python3 -m pip install pymini
 
 ## CLI
 
-Minify a single file, a directory, or a glob:
+Package mode is the default and preserves the package tree:
 
 ```bash
-pymini "src/**/*.py" -o out
+pymini package src -o out
 ```
 
-If you need module names and top-level public symbols to remain stable, keep them explicitly:
+Legacy invocation without an explicit mode still defaults to `package`:
 
 ```bash
-pymini src --keep-module-names --keep-global-variables -o out
+pymini src -o out
 ```
 
-Create a single bundled output file:
+By default, `pymini` preserves module paths and public globals. When possible, it keeps the public surface stable by emitting aliases while still shortening internal names. To trade API stability for more aggressive compression:
 
 ```bash
-pymini src --single-file -o out/bundle.py
+pymini package src --rename-global-variables -o out
 ```
 
-Without `--keep-module-names`, output filenames may also be shortened as part of the minification pass.
+Bundle mode emits a single file and is better suited to app-style graphs than libraries:
+
+```bash
+pymini bundle src -o out/bundle.py
+```
+
+The legacy `--single-file` flag is still accepted as a compatibility alias for bundle mode.
 
 ## Python API
 

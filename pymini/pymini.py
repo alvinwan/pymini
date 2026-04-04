@@ -155,6 +155,7 @@ class VariableShortener(NodeTransformer):
         self.generator = generator
         self.name_to_node = {}
         self.nodes_to_insert = []
+        self.nodes_to_append = []
         # TODO: cleanup
         self.str_name_to_node = {}
         self.str_mapping = {}
@@ -166,6 +167,15 @@ class VariableShortener(NodeTransformer):
         return (
             not hasattr(node, 'parent') or isinstance(node.parent, ast.Module)
         )
+
+    def _rename_identifier(self, old_name):
+        if old_name not in self.mapping.values():
+            self.mapping[old_name] = next(self.generator)
+        return self.mapping[old_name]
+
+    def _append_public_alias(self, old_name, new_name):
+        if old_name != new_name:
+            self.nodes_to_append.append(ast.parse(f"{old_name} = {new_name}").body[0])
 
     def _visit_ImportOrImportFrom(self, node):
         """Shorten imported library names.
@@ -189,6 +199,8 @@ class VariableShortener(NodeTransformer):
         import donotaliasme
         from donotaliasme import dolor
         """
+        if self.keep_global_variables and self._is_node_global(node):
+            return self.generic_visit(node)
         if isinstance(node, ast.Import) or node.module not in self.modules:
             for alias in node.names:
                 if isinstance(node, ast.ImportFrom) or alias.name not in self.modules:
@@ -208,12 +220,22 @@ class VariableShortener(NodeTransformer):
         >>> apply('class Demiurgic: pass\\nholy = Demiurgic()')
         'class a:\\n    pass\\nb = a()'
         >>> shortener = VariableShortener(variable_name_generator(), keep_global_variables=True)
+        >>> def apply(src):
+        ...     tree = ast.parse(src)
+        ...     shortener.visit(tree)
+        ...     append_public_aliases(tree, shortener.nodes_to_append)
+        ...     return ast.unparse(tree)
+        ...
         >>> apply('class Demiurgic: pass\\nholy = Demiurgic()')
-        'class Demiurgic:\\n    pass\\nholy = Demiurgic()'
+        'class a:\\n    pass\\nholy = a()\\nDemiurgic = a'
         """
-        if node.name not in self.mapping.values() and not (  # TODO: make .values() more efficient 
-            self.keep_global_variables and self._is_node_global(node)
-        ):  # TODO: rename but insert var def if worth it
+        if self.keep_global_variables and self._is_node_global(node):
+            if len(node.name) > 1 and node.name not in self.mapping.values():
+                old_name = node.name
+                node.name = self._rename_identifier(old_name)
+                self._append_public_alias(old_name, node.name)
+            return self.generic_visit(node)
+        if node.name not in self.mapping.values():  # TODO: make .values() more efficient
             self.mapping[node.name] = node.name = next(self.generator)
         return self.generic_visit(node)
 
@@ -225,13 +247,23 @@ class VariableShortener(NodeTransformer):
         >>> apply('def demiurgic(palpitation): return palpitation\\nholy = demiurgic()')
         'def b(a):\\n    return a\\nc = b()'
         >>> shortener = VariableShortener(variable_name_generator(), keep_global_variables=True)
+        >>> def apply(src):
+        ...     tree = ast.parse(src)
+        ...     shortener.visit(tree)
+        ...     append_public_aliases(tree, shortener.nodes_to_append)
+        ...     return ast.unparse(tree)
+        ...
         >>> apply('def demiurgic(palpitation): return palpitation\\nholy = demiurgic()')
-        'def demiurgic(a):\\n    return a\\nholy = demiurgic()'
+        'def b(a):\\n    return a\\nholy = b()\\ndemiurgic = b'
         """
         for arg in node.args.args + [node.args.vararg, node.args.kwarg]:
             if arg is not None and arg.arg not in self.mapping.values():  # TODO: make .values() more efficient
                 self.mapping[arg.arg] = arg.arg = next(self.generator)
-        if self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it
+        if self.keep_global_variables and self._is_node_global(node):
+            if len(node.name) > 1 and node.name not in self.mapping.values():
+                old_name = node.name
+                node.name = self._rename_identifier(old_name)
+                self._append_public_alias(old_name, node.name)
             return self.generic_visit(node)
         if node.name not in self.mapping.values():  # TODO: need to dedup this logic
             self.mapping[node.name] = node.name = next(self.generator)
@@ -289,10 +321,12 @@ class VariableShortener(NodeTransformer):
         """
         if node.id in self.mapping.values():  # TODO: make .values() more efficient
             return node
+        if self.keep_global_variables and self._is_node_global(node):
+            if node.id in self.mapping:
+                node.id = self.mapping[node.id]
+            return self.generic_visit(node)
         if node.id in self.mapping:
             node.id = self.mapping[node.id]
-        elif self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it  # TODO: this optimization should only apply to var def
-            return self.generic_visit(node)
         elif node.id in self.name_to_node:
             self.mapping[node.id] = new_variable_name = next(self.generator)
             self.nodes_to_insert.append(ast.parse(f'{new_variable_name} = {node.id}').body[0])
@@ -365,6 +399,7 @@ class IndependentVariableShorteners(Transformer):
         for module, tree in zip(self.modules, trees):
             self.module_to_shortener[module].transform(tree)
             define_custom_variables(tree, self.module_to_shortener[module].nodes_to_insert)
+            append_public_aliases(tree, self.module_to_shortener[module].nodes_to_append)
         return trees
 
 
@@ -386,33 +421,28 @@ class FusedVariableShortener(Transformer):
         self.keep_module_names = keep_module_names
 
     def transform(self, *trees):
-        if self.keep_module_names:
-            return trees
+        original_modules = list(self.module_to_shortener)
+        module_to_module = {}
+        if not self.keep_module_names:
+            module_to_module = {module: next(self.generator) for module in original_modules}
 
-        # shorten module names
-        module_to_module = {module: next(self.generator) for module in self.modules}
-
-        # NOTE: Must modify in-place, as this list is passed to Fuser
-        for i, module in enumerate(self.modules):
-            self.modules[i] = module_to_module[module]
+            # NOTE: Must modify in-place, as this list is passed to Fuser
+            for i, module in enumerate(original_modules):
+                self.modules[i] = module_to_module[module]
 
         new_trees = []  # TODO: cleanup
-        for tree, module in zip(trees, module_to_module):
-
-            # rerun shortening on ea file based on imports from *other files
-            fused_mapping = {}
-            for _module, shortener in self.module_to_shortener.items():
-                if _module != module:
-                    fused_mapping.update(shortener.mapping)
-                else:
-                    # HACK: identity needed, so that we don't rename variables
-                    # *again. TODO: figure out why single-char variables are
-                    # being renamed
-                    fused_mapping.update({v: v for v in shortener.mapping.values()})
+        for tree, module in zip(trees, original_modules):
+            # Preserve names already shortened in this module, and only rewrite
+            # imported references using the exporter module's mapping.
+            fused_mapping = {
+                value: value
+                for value in self.module_to_shortener[module].mapping.values()
+            }
 
             imported = ImportedVariableShortener(
                 self.generator,
                 mapping=fused_mapping,
+                keep_global_variables=True,
                 module_to_module={_module: value for _module, value in module_to_module.items() if module != _module},
                 module_to_shortener={_module: value for _module, value in self.module_to_shortener.items() if module != _module},
             )
@@ -520,6 +550,13 @@ def define_custom_variables(tree, mapping):
     root = next(ast.walk(tree))
     for node in mapping:
         root.body.insert(0, ast.copy_location(node, root))
+    ast.fix_missing_locations(tree)
+
+
+def append_public_aliases(tree, aliases):
+    root = next(ast.walk(tree))
+    for node in aliases:
+        root.body.append(ast.copy_location(node, root))
     ast.fix_missing_locations(tree)
 
 

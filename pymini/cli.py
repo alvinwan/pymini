@@ -1,5 +1,6 @@
 import glob
-from argparse import ArgumentParser
+import sys
+from argparse import ArgumentParser, SUPPRESS
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -7,15 +8,55 @@ from pymini import __version__
 from pymini.pymini import minify
 
 
+PACKAGE_MODE = "package"
+BUNDLE_MODE = "bundle"
+MODES = {PACKAGE_MODE, BUNDLE_MODE}
+
+
 def build_parser() -> ArgumentParser:
     parser = ArgumentParser(prog="pymini")
+    parser.add_argument(
+        "mode",
+        choices=sorted(MODES),
+        help="Output mode: preserve a package tree or bundle everything into one file.",
+    )
     parser.add_argument('path', help='Path to the file or directory to minify')
-    parser.add_argument('--keep-module-names', action='store_true', help='Keep module names as they are. Useful for compressing libraries')
-    parser.add_argument('--keep-global-variables', action='store_true', help='Keep global variables as they are. Useful for compressing libraries')
-    parser.add_argument('--single-file', action='store_true', help='Concatenate all outputs into a single file')
+    parser.add_argument(
+        '--rename-modules',
+        action='store_true',
+        help='Allow module names to be shortened when the selected mode supports it.',
+    )
+    parser.add_argument(
+        '--rename-global-variables',
+        action='store_true',
+        help='Rename top-level globals instead of preserving them through public aliases.',
+    )
+    parser.add_argument('--single-file', action='store_true', help=SUPPRESS)
     parser.add_argument('-o', '--output', help='Path to the output directory', default='./')
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     return parser
+
+
+def normalize_argv(argv: Optional[Sequence[str]]) -> list[str]:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args:
+        return args
+    if args[0] in MODES:
+        return args
+    if args[0].startswith("-"):
+        return [PACKAGE_MODE, *args]
+    return [PACKAGE_MODE, *args]
+
+
+def effective_mode(args) -> str:
+    return BUNDLE_MODE if args.single_file else args.mode
+
+
+def resolve_options(args) -> tuple[str, bool, bool, bool]:
+    mode = effective_mode(args)
+    keep_module_names = not args.rename_modules
+    keep_global_variables = not args.rename_global_variables
+    return mode, keep_module_names, keep_global_variables, mode == BUNDLE_MODE
 
 
 def resolve_python_files(path: str) -> tuple[list[Path], Optional[Path]]:
@@ -101,7 +142,8 @@ def write_outputs(
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(normalize_argv(argv))
+    mode, keep_module_names, keep_global_variables, output_single_file = resolve_options(args)
     paths, module_root = resolve_python_files(args.path)
     if not paths:
         parser.error(f"no Python files matched {args.path!r}")
@@ -112,17 +154,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
     cleaned, modules = minify(
-        sources, modules, keep_module_names=args.keep_module_names,
-        keep_global_variables=args.keep_global_variables,
-        output_single_file=args.single_file
+        sources,
+        modules,
+        keep_module_names=keep_module_names,
+        keep_global_variables=keep_global_variables,
+        output_single_file=output_single_file,
     )
     try:
         write_outputs(
             cleaned,
             modules,
             Path(args.output),
-            single_file=args.single_file,
-            keep_module_names=args.keep_module_names,
+            single_file=output_single_file,
+            keep_module_names=keep_module_names,
             module_to_output_path=module_to_output_path,
         )
     except ValueError as exc:
