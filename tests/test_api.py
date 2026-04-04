@@ -233,6 +233,65 @@ def test_minify_does_not_hoist_repeated_strings_into_class_bodies(tmp_path):
     assert modules == ["main"]
 
 
+def test_minify_hoisted_strings_do_not_collide_with_lambda_parameters(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def outer():
+                return (lambda b: ("hello", "hello"))("x")
+
+            print(outer())
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "('hello', 'hello')\n"
+    assert modules == ["main"]
+
+
+def test_minify_hoisted_strings_do_not_conflict_with_global_declarations(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def outer():
+                global b
+                return ("hello", "hello")
+
+            print(outer())
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "('hello', 'hello')\n"
+    assert modules == ["main"]
+
+
 def test_minify_preserves_global_names_without_breaking_shadowed_locals(tmp_path):
     cleaned, modules = minify(
         py(

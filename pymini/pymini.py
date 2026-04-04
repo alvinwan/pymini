@@ -698,6 +698,24 @@ def _is_unsupported_hoisted_string_context(node):
     return False
 
 
+def _reserved_names_in_node(node):
+    names = set()
+    for current in ast.walk(node):
+        if isinstance(current, ast.Name):
+            names.add(current.id)
+        elif isinstance(current, ast.arg):
+            names.add(current.arg)
+        elif isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(current.name)
+        elif isinstance(current, ast.alias):
+            names.add(current.asname or current.name.split(".", 1)[0])
+        elif isinstance(current, (ast.Global, ast.Nonlocal)):
+            names.update(current.names)
+        elif isinstance(current, ast.ExceptHandler) and current.name:
+            names.add(current.name)
+    return names
+
+
 class RepeatedStringHoister(Transformer):
     # Reintroduced in the narrowest safe form first: only hoist repeated string
     # literals inside function bodies. Module and class scopes are still left
@@ -760,6 +778,13 @@ class RepeatedStringRewriter(ast.NodeTransformer):
         self.repeated_strings_by_scope = repeated_strings_by_scope
         self.scope_stack = []
 
+    def _next_safe_name(self, reserved_names):
+        while True:
+            candidate = next(self.generator)
+            if candidate not in reserved_names:
+                reserved_names.add(candidate)
+                return candidate
+
     def _prepend_assignments(self, body, mapping):
         assignments = []
         for value, name in mapping.items():
@@ -775,7 +800,11 @@ class RepeatedStringRewriter(ast.NodeTransformer):
         mapping = {}
         repeated = self.repeated_strings_by_scope.get(id(node), ())
         if repeated:
-            mapping = {value: next(self.generator) for value in repeated}
+            reserved_names = _reserved_names_in_node(node)
+            mapping = {
+                value: self._next_safe_name(reserved_names)
+                for value in repeated
+            }
         self.scope_stack.append(mapping)
         node.body = [self.visit(statement) for statement in node.body]
         self.scope_stack.pop()
