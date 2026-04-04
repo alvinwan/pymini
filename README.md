@@ -1,71 +1,58 @@
 # pymini
 
-Python minifier. Built to operate on entire libraries, persisting and supporting minification across files.
+`pymini` minifies Python source code by simplifying syntax, shortening identifiers, and stripping unnecessary whitespace. It supports single-file input and small groups of related modules.
+
+## Status
+
+This project is maintained as an AST-based minifier for Python 3.9+ code. It is best suited to scripts and small module graphs that use straightforward imports such as `from module import name`.
 
 ## Installation
 
-    pip install pymini
-
-## Usage
-
-    pymini [options] <file>
-
-To uglify a library, use the following options to preserve
-your ability to import and use the library's publicly-facing
-utilities.
-
-    pymini --keep-module-names --keep-global-variables <file>
-
-## Comparison
-
-We run comparisons against the following:
-
-- pyminify - https://github.com/dflook/python-minifier
-- pyminifier - https://github.com/liftoff/pyminifier
-- mnfy - https://github.com/brettcannon/mnfy (does not work on Python >3.4)
-
-To repeat our results, run the following to setup.
-
-```
-pip install python-minifier
-pip install setuptools==57.5.0 && pip install pyminifier  # hack to get pyminifer to install
-pip install mnfy  # if you're running python3.4
-pip install pymini  # ours
+```bash
+python3 -m pip install pymini
 ```
 
-Then, run the following to get mini'd versions of the sample file `sample/test.py`, which comes from `pyminifer`'s repository.
+## CLI
 
-```
-mkdir -p out
-pyminify --rename-globals --remove-literal-statements sample/test.py > out/pyminify.py
-pyminifier --obfuscate sample/test.py > out/pyminifier.py
-python -m mnfy sample/test.py > out/mnfy.py
-uglipy sample/test.py > out/pyminiest.py
+Minify a single file, a directory, or a glob:
+
+```bash
+pymini "src/**/*.py" -o out
 ```
 
-Then, run `ls -lh out`. You should see the following.
+If you need module names and top-level public symbols to remain stable, keep them explicitly:
 
-```
-total 24
--rw-r--r--  1 alvinwan  staff   414B Nov 25 01:22 pyminiest.py
--rw-r--r--  1 alvinwan  staff   602B Nov 25 01:19 pyminifier.py
--rw-r--r--  1 alvinwan  staff   490B Nov 25 01:18 pyminify.py
+```bash
+pymini src --keep-module-names --keep-global-variables -o out
 ```
 
-By comparison, the original file size was 1355B; `uglipy` achieves the smallest file size, 16% smaller than `pyminify` and 30% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 64% to 71%. We can also test against `test2.py`, which comes from `pyminify`'s repository.
+Create a single bundled output file:
 
-```
--rw-r--r--  1 alvinwan  staff   914B Nov 25 02:09 pyminiest.py
--rw-r--r--  1 alvinwan  staff   1.4K Nov 25 01:32 pyminifier.py
--rw-r--r--  1 alvinwan  staff   977B Nov 25 01:32 pyminify.py
+```bash
+pymini src --single-file -o out/bundle.py
 ```
 
-By comparison, the original file size was 1990B. `uglipy`'s file size is 6% smaller than `pyminify` and 34% smaller than `pyminifier`, improving the best possible obfuscated file size reduction from 51% to 54%.
+Without `--keep-module-names`, output filenames may also be shortened as part of the minification pass.
 
-## Develop
+## Python API
 
-Run tests using the following, from the root directory
+```python
+from pymini import minify
 
+sources, modules = minify(
+    [
+        "def square(x):\n    return x ** 2\n",
+        "from main import square\nprint(square(3))\n",
+    ],
+    ["main", "side"],
+)
 ```
-py.test --doctest-modules
+
+## Development
+
+Install development dependencies and run the test suite:
+
+```bash
+python3 -m pip install -e ".[dev]"
+python3 -m pytest
 ```

@@ -1,5 +1,6 @@
 out
 *.ugli.*
+.DS_Store
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -127,6 +128,7 @@ venv.bak/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+.ruff_cache/
 
 # Pyre type checker
 .pyre/

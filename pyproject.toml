@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=69.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,15 +8,30 @@ version = "0.1.1"
 authors = [
   { name="Alvin Wan", email="hi@alvinwan.com" },
 ]
-description = "Minify python"
+description = "A Python source minifier for scripts and small module graphs."
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+keywords = ["ast", "minifier", "obfuscation", "python"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
 ]
 dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2",
+    "pytest>=8.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["pymini"]
@@ -26,4 +41,8 @@ pymini = "pymini.cli:main"
 
 [project.urls]
 "Homepage" = "https://github.com/alvinwan/pymini"
+"Repository" = "https://github.com/alvinwan/pymini"
 "Bug Tracker" = "https://github.com/alvinwan/pymini/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
