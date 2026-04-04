@@ -670,18 +670,23 @@ class FusedVariableShortener(Transformer):
 
 def _is_unsupported_hoisted_string_context(node):
     current = node
-    pattern_nodes = (
-        ast.MatchValue,
-        ast.MatchSingleton,
-        ast.MatchSequence,
-        ast.MatchMapping,
-        ast.MatchClass,
-        ast.MatchAs,
-        ast.MatchOr,
+    pattern_nodes = tuple(
+        node_type for node_type in (
+            getattr(ast, "MatchValue", None),
+            getattr(ast, "MatchSingleton", None),
+            getattr(ast, "MatchSequence", None),
+            getattr(ast, "MatchMapping", None),
+            getattr(ast, "MatchClass", None),
+            getattr(ast, "MatchAs", None),
+            getattr(ast, "MatchOr", None),
+        )
+        if node_type is not None
     )
     while hasattr(current, "parent"):
         parent = current.parent
-        if isinstance(parent, (ast.JoinedStr, *pattern_nodes)):
+        if isinstance(parent, ast.JoinedStr):
+            return True
+        if pattern_nodes and isinstance(parent, pattern_nodes):
             return True
         if isinstance(parent, ast.arg) and parent.annotation is current:
             return True
