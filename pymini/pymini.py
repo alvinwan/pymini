@@ -1,7 +1,6 @@
 import ast
 import copy
 import keyword
-from graphlib import TopologicalSorter
 from typing import Dict, List, Optional, Set
 from .utils import variable_name_generator
 
@@ -169,6 +168,7 @@ class VariableShortener(NodeTransformer):
         self.name_to_node = {}
         self.nodes_to_insert = []
         self.nodes_to_append = []
+        self.public_global_names = set()
         # TODO: cleanup
         self.str_name_to_node = {}
         self.str_mapping = {}
@@ -296,7 +296,11 @@ class VariableShortener(NodeTransformer):
         'demiurgic = 1\\nholy = demiurgic'
         """
         if self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it
-            return self.generic_visit(node)
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.public_global_names.add(target.id)
+            node.value = self.visit(node.value)
+            return node
         for target in node.targets:
             if isinstance(target, ast.Name) and target.id not in self.mapping.values():  # TODO: make .values() more efficient
                 self.mapping[target.id] = target.id = next(self.generator)
@@ -334,6 +338,8 @@ class VariableShortener(NodeTransformer):
         """
         if node.id in self.mapping.values():  # TODO: make .values() more efficient
             return node
+        if self.keep_global_variables and node.id in self.public_global_names:
+            return self.generic_visit(node)
         if self.keep_global_variables and self._is_node_global(node):
             if node.id in self.mapping:
                 node.id = self.mapping[node.id]
@@ -435,6 +441,7 @@ class FusedVariableShortener(Transformer):
 
     def transform(self, *trees):
         original_modules = list(self.module_to_shortener)
+        packages = package_modules(original_modules)
         module_to_module = {}
         if not self.keep_module_names:
             module_to_module = {module: next(self.generator) for module in original_modules}
@@ -455,9 +462,11 @@ class FusedVariableShortener(Transformer):
             imported = ImportedVariableShortener(
                 self.generator,
                 mapping=fused_mapping,
+                current_module=module,
                 keep_global_variables=True,
                 module_to_module={_module: value for _module, value in module_to_module.items() if module != _module},
                 module_to_shortener={_module: value for _module, value in self.module_to_shortener.items() if module != _module},
+                packages=packages,
             )
             new_trees.extend(imported.transform(tree))
         return new_trees
@@ -475,20 +484,25 @@ class ImportedVariableShortener(VariableShortener):
     >>> apply('from silly import demiurgic, dontreplaceme; print(demiurgic)')
     'from silly import a, dontreplaceme\\nprint(a)'
     """
-    def __init__(self, *args, module_to_shortener=None, module_to_module=None, **kwargs):
+    def __init__(self, *args, current_module=None, module_to_shortener=None, module_to_module=None, packages=(), **kwargs):
         super().__init__(*args, **kwargs)
+        self.current_module = current_module
         self.module_to_shortener = module_to_shortener or {}
         self.module_to_module = module_to_module or {}
+        self.packages = set(packages)
 
     def visit_ImportFrom(self, node):
         """Apply shortener for imported module."""
-        shortener = self.module_to_shortener.get(node.module, None)
+        module_name = resolve_import_from(self.current_module, node, self.packages)
+        shortener = self.module_to_shortener.get(module_name, None)
         if shortener is not None:
             for alias in node.names:
+                if alias.name == "*":
+                    continue
                 if alias.name in shortener.mapping:
                     self.mapping[alias.name] = alias.name = shortener.mapping[alias.name]
-            if node.module in self.module_to_module:  # TODO: handle nested modules
-                node.module = self.module_to_module[node.module]
+            if node.level == 0 and module_name in self.module_to_module:
+                node.module = self.module_to_module[module_name]
         return self.generic_visit(node)
 
 
@@ -507,56 +521,35 @@ class FileFuser(Fuser):
     Determine dependency between files by checking import statements. After
     linearizing dependencies, combine files in that order.
     """
-    def _dependencies_for_tree(self, tree, modules):
-        dependencies = set()
+    def _dependencies_for_tree(self, module, tree, modules):
+        dependencies = ancestor_package_modules(module, modules)
+        packages = package_modules(modules)
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module in modules:
-                dependencies.add(node.module)
+            if isinstance(node, ast.ImportFrom):
+                target_module = resolve_import_from(module, node, packages)
+                dependencies.update(internal_module_dependencies(target_module, modules))
+                for alias in node.names:
+                    if alias.name != "*":
+                        dependencies.update(
+                            internal_module_dependencies(f"{target_module}.{alias.name}", modules)
+                        )
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    module = alias.name.split('.')[0]
-                    if module in modules:
-                        dependencies.add(module)
+                    dependencies.update(internal_module_dependencies(alias.name, modules))
         return dependencies
-
-    def _module_order(self, module_to_tree):
-        sorter = TopologicalSorter()
-        modules = set(module_to_tree)
-        for module, tree in module_to_tree.items():
-            dependencies = self._dependencies_for_tree(tree, modules - {module})
-            sorter.add(module, *dependencies)
-        return list(sorter.static_order())
-
-    def _strip_internal_imports(self, tree, modules):
-        filtered_body = []
-        for statement in tree.body:
-            if isinstance(statement, ast.ImportFrom) and statement.level == 0 and statement.module in modules:
-                continue
-            if isinstance(statement, ast.Import):
-                statement.names = [
-                    alias for alias in statement.names
-                    if alias.name.split('.')[0] not in modules
-                ]
-                if not statement.names:
-                    continue
-            filtered_body.append(statement)
-        tree.body = filtered_body
-        return tree
 
     def transform(self, *trees):
         module_to_tree = dict(zip(self.modules, trees))
-        module_order = self._module_order(module_to_tree)
-        internal_modules = set(module_order)
-
-        combined_body = []
-        for module in module_order:
-            tree = self._strip_internal_imports(module_to_tree[module], internal_modules)
-            combined_body.extend(tree.body)
-
-        root = module_to_tree[module_order[0]]
-        root.body = combined_body
-        ast.fix_missing_locations(root)
-        return [root]
+        modules = set(module_to_tree)
+        dependency_map = {
+            module: self._dependencies_for_tree(module, tree, modules - {module})
+            for module, tree in module_to_tree.items()
+        }
+        self.entry_modules = [
+            module for module in self.modules
+            if all(module not in dependencies for dependencies in dependency_map.values())
+        ] or list(self.modules)
+        return [module_to_tree[module] for module in self.modules]
 
 
 def define_custom_variables(tree, mapping):
@@ -578,6 +571,95 @@ class Unparser:
     def transform(self, *trees):
         for tree in trees:
             yield ast.unparse(tree)
+
+
+def module_prefixes(module: Optional[str]) -> List[str]:
+    if not module:
+        return []
+    parts = module.split(".")
+    return [".".join(parts[:i]) for i in range(1, len(parts) + 1)]
+
+
+def package_modules(modules) -> Set[str]:
+    module_names = set(modules)
+    packages = set()
+    for module in module_names:
+        prefixes = module_prefixes(module)
+        packages.update(prefixes[:-1])
+        if any(other.startswith(f"{module}.") for other in module_names):
+            packages.add(module)
+    return packages
+
+
+def ancestor_package_modules(module: str, modules) -> Set[str]:
+    module_names = set(modules)
+    return {
+        prefix
+        for prefix in module_prefixes(module)[:-1]
+        if prefix in module_names
+    }
+
+
+def module_package_name(module: Optional[str], packages: Set[str]) -> str:
+    if not module:
+        return ""
+    if module in packages:
+        return module
+    return module.rsplit(".", 1)[0] if "." in module else ""
+
+
+def resolve_import_from(current_module: Optional[str], node: ast.ImportFrom, packages: Set[str]) -> Optional[str]:
+    if node.level == 0:
+        return node.module
+
+    package_name = module_package_name(current_module, packages)
+    package_parts = package_name.split(".") if package_name else []
+    if node.level > len(package_parts) + 1:
+        return node.module
+
+    base_parts = package_parts[:len(package_parts) - node.level + 1]
+    if node.module:
+        base_parts.extend(node.module.split("."))
+    return ".".join(part for part in base_parts if part)
+
+
+def internal_module_dependencies(module: Optional[str], modules) -> Set[str]:
+    module_names = set(modules)
+    return {
+        prefix
+        for prefix in module_prefixes(module)
+        if prefix in module_names
+    }
+
+
+def bundle_sources(sources: List[str], modules: List[str], entry_modules: Optional[List[str]] = None) -> str:
+    source_map = {module: source for module, source in zip(modules, sources)}
+    package_names = package_modules(source_map)
+    for package_name in sorted(package_names):
+        source_map.setdefault(package_name, "")
+    if not entry_modules:
+        entry_modules = list(modules)
+
+    bundle_runtime = f"""
+import importlib.abc as _a
+import importlib.util as _u
+import sys as _s
+_M={source_map!r}
+_P={sorted(package_names)!r}
+class _L(_a.Loader):
+ def __init__(self,n):self.n=n
+ def create_module(self,spec):return None
+ def exec_module(self,module):
+  if self.n in _P:module.__path__=[]
+  exec(_M[self.n],module.__dict__)
+class _F(_a.MetaPathFinder):
+ def find_spec(self,fullname,path=None,target=None):
+  if fullname not in _M:return None
+  return _u.spec_from_loader(fullname,_L(fullname),is_package=fullname in _P)
+_s.meta_path.insert(0,_F())
+for _m in {entry_modules!r}:__import__(_m)
+"""
+    return bundle_runtime.strip() + "\n"
 
 
 class WhitespaceRemover(NodeTransformer):
@@ -856,6 +938,8 @@ def minify(sources, modules='main', keep_module_names=False,
         WhitespaceRemover(),
     )
     cleaned = list(pipeline.transform(*trees))
+    if output_single_file:
+        cleaned = [bundle_sources(cleaned, fuser.modules, getattr(fuser, "entry_modules", None))]
 
     output_modules = [single_file_module] if output_single_file else fuser.modules
     return cleaned, output_modules

@@ -4,7 +4,7 @@
 
 ## Status
 
-This project is maintained as an AST-based minifier for Python 3.9+ code. It is best suited to scripts and small module graphs that use straightforward imports such as `from module import name`.
+This project is maintained as an AST-based minifier for Python 3.9+ code. It is best suited to scripts and small-to-medium package graphs. Package mode preserves package layout and now covers relative imports, dotted imports, star imports, package re-exports, and `importlib`-based internal imports; bundle mode emits a self-contained loader-backed single file for the same kinds of graphs.
 
 ## Installation
 

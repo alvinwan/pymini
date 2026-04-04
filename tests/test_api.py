@@ -1,4 +1,6 @@
 import ast
+import subprocess
+import sys
 from textwrap import dedent
 
 from pymini import minify
@@ -45,18 +47,6 @@ def assert_bundle_preserves_public_alias(bundle_source: str) -> None:
     assert isinstance(alias, ast.Assign)
     assert alias.targets[0].id == "square"
     assert alias.value.id == function.name
-
-    call = printer.value
-    assert call.args[0].func.id == function.name
-
-
-def assert_bundle_is_shortened(bundle_source: str) -> None:
-    bundle_tree = ast.parse(bundle_source)
-    function, printer = bundle_tree.body
-
-    assert isinstance(function, ast.FunctionDef)
-    assert function.name != "square"
-    assert len(function.name) == 1
 
     call = printer.value
     assert call.args[0].func.id == function.name
@@ -166,7 +156,7 @@ def test_minify_preserves_public_names_when_requested():
     assert modules == ["main", "side"]
 
 
-def test_minify_fuses_files_into_single_module():
+def test_minify_fuses_files_into_single_module(tmp_path):
     cleaned, modules = minify(
         [
             py(
@@ -187,5 +177,15 @@ def test_minify_fuses_files_into_single_module():
         output_single_file=True,
     )
 
-    assert_bundle_is_shortened(cleaned[0])
+    bundle_path = tmp_path / "bundle.py"
+    bundle_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(bundle_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "9\n"
     assert modules == ["bundle"]
