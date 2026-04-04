@@ -1,4 +1,5 @@
 import ast
+import copy
 import keyword
 from graphlib import TopologicalSorter
 from typing import Dict, List, Optional, Set
@@ -41,39 +42,51 @@ class ReturnSimplifier(NodeTransformer):
     
         return (some code)
 
-    NOTE: unused_names must be modified in-place, since the set is passed to
-    RemoveUnusedVariables at initialization. Can't return a new set.
+    NOTE: unused_assignments must be modified in-place, since the set is passed
+    to RemoveUnusedVariables at initialization. Can't return a new set.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.name_to_node = {}
-        self.unused_names = set()
+        self.unused_assignments = set()
 
-    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
-        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            self.name_to_node[node.targets[0].id] = node
-        return self.generic_visit(node)
+    def _can_simplify_return(self, previous: ast.stmt, current: ast.stmt) -> bool:
+        return (
+            isinstance(previous, ast.Assign)
+            and len(previous.targets) == 1
+            and isinstance(previous.targets[0], ast.Name)
+            and isinstance(current, ast.Return)
+            and isinstance(current.value, ast.Name)
+            and current.value.id == previous.targets[0].id
+        )
 
-    def visit_Return(self, node: ast.Return) -> ast.Return:
-        if isinstance(node.value, ast.Name):
-            self.unused_names.add(node.value.id)
-            node = self.name_to_node[node.value.id]
-            return ast.Return(value=node.value)
-        return self.generic_visit(node)
+    def _simplify_body(self, body: List[ast.stmt]) -> List[ast.stmt]:
+        for previous, current in zip(body, body[1:]):
+            if self._can_simplify_return(previous, current):
+                self.unused_assignments.add(id(previous))
+                current.value = copy.deepcopy(previous.value)
+        return body
+
+    def generic_visit(self, node):
+        node = super().generic_visit(node)
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, list) and value and all(isinstance(item, ast.stmt) for item in value):
+                setattr(node, field, self._simplify_body(value))
+        return node
 
 
 class RemoveUnusedVariables(NodeTransformer):
     """Remove all unused variables.
     
-    NOTE: cannot store a copy of unused_names, as this set is modified in-place
+    NOTE: cannot store a copy of unused_assignments, as this set is modified
+    in-place
     after initialization.
     """
-    def __init__(self, unused_names: Set[str]):
+    def __init__(self, unused_assignments: Set[int]):
         super().__init__()
-        self.unused_names = unused_names
+        self.unused_assignments = unused_assignments
 
-    def visit_Assign(self, node: ast.Name) -> ast.Name:
-        if isinstance(node.targets[0], ast.Name) and node.targets[0].id in self.unused_names:
+    def visit_Assign(self, node: ast.Assign) -> Optional[ast.Assign]:
+        if id(node) in self.unused_assignments:
             return None
         return self.generic_visit(node)
 
@@ -812,7 +825,7 @@ def minify(sources, modules='main', keep_module_names=False,
 
         # simplify
         simplifier := ReturnSimplifier(),
-        RemoveUnusedVariables(simplifier.unused_names),
+        RemoveUnusedVariables(simplifier.unused_assignments),
 
         # minify
         ParentSetter(),

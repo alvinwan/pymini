@@ -80,6 +80,39 @@ def test_minify_simplifies_returns():
     assert modules == ["main"]
 
 
+def test_minify_does_not_crash_when_returning_parameter_names():
+    cleaned, modules = minify(
+        py(
+            """
+            def abs_path(path):
+                if path:
+                    return path
+
+                value = 1
+                return value
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    tree = ast.parse(cleaned[0])
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    condition = function.body[0]
+    simplified_return = function.body[1]
+
+    assert isinstance(condition, ast.If)
+    assert isinstance(condition.body[0], ast.Return)
+    assert isinstance(condition.body[0].value, ast.Name)
+    assert condition.body[0].value.id == function.args.args[0].arg
+
+    assert isinstance(simplified_return, ast.Return)
+    assert isinstance(simplified_return.value, ast.Constant)
+    assert simplified_return.value.value == 1
+    assert modules == ["main"]
+
+
 def test_minify_updates_cross_file_imports():
     cleaned, modules = minify(
         [
