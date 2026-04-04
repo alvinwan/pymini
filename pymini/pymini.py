@@ -169,6 +169,7 @@ class VariableShortener(NodeTransformer):
         self.nodes_to_insert = []
         self.nodes_to_append = []
         self.public_global_names = set()
+        self.scope_stack = []
         # TODO: cleanup
         self.str_name_to_node = {}
         self.str_mapping = {}
@@ -189,6 +190,72 @@ class VariableShortener(NodeTransformer):
     def _append_public_alias(self, old_name, new_name):
         if old_name != new_name:
             self.nodes_to_append.append(ast.parse(f"{old_name} = {new_name}").body[0])
+
+    def _binding_names_from_target(self, target):
+        names = set()
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                names.update(self._binding_names_from_target(element))
+        return names
+
+    def _scope_bindings(self, node):
+        bindings = set()
+        globals_ = set()
+
+        class ScopeBindingCollector(ast.NodeVisitor):
+            def visit_Global(self, inner):
+                globals_.update(inner.names)
+
+            def visit_arg(self, inner):
+                bindings.add(inner.arg)
+
+            def visit_Name(self, inner):
+                if isinstance(inner.ctx, ast.Store):
+                    bindings.add(inner.id)
+
+            def visit_FunctionDef(self, inner):
+                bindings.add(inner.name)
+
+            visit_AsyncFunctionDef = visit_FunctionDef
+
+            def visit_ClassDef(self, inner):
+                bindings.add(inner.name)
+
+            def visit_Lambda(self, inner):
+                return None
+
+            def visit_ListComp(self, inner):
+                return None
+
+            def visit_SetComp(self, inner):
+                return None
+
+            def visit_DictComp(self, inner):
+                return None
+
+            def visit_GeneratorExp(self, inner):
+                return None
+
+        collector = ScopeBindingCollector()
+        for statement in getattr(node, "body", []):
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                collector.visit(statement)
+                continue
+            collector.visit(statement)
+        bindings.difference_update(globals_)
+        return {"bindings": bindings, "globals": globals_}
+
+    def _is_preserved_public_global_reference(self, name):
+        if name not in self.public_global_names:
+            return False
+        for scope in reversed(self.scope_stack):
+            if name in scope["globals"]:
+                continue
+            if name in scope["bindings"]:
+                return False
+        return True
 
     def _visit_ImportOrImportFrom(self, node):
         """Shorten imported library names.
@@ -247,10 +314,18 @@ class VariableShortener(NodeTransformer):
                 old_name = node.name
                 node.name = self._rename_identifier(old_name)
                 self._append_public_alias(old_name, node.name)
-            return self.generic_visit(node)
+            self.scope_stack.append(self._scope_bindings(node))
+            try:
+                return self.generic_visit(node)
+            finally:
+                self.scope_stack.pop()
         if node.name not in self.mapping.values():  # TODO: make .values() more efficient
             self.mapping[node.name] = node.name = next(self.generator)
-        return self.generic_visit(node)
+        self.scope_stack.append(self._scope_bindings(node))
+        try:
+            return self.generic_visit(node)
+        finally:
+            self.scope_stack.pop()
 
     def visit_FunctionDef(self, node):
         """Shorten function and argument names.
@@ -277,10 +352,18 @@ class VariableShortener(NodeTransformer):
                 old_name = node.name
                 node.name = self._rename_identifier(old_name)
                 self._append_public_alias(old_name, node.name)
-            return self.generic_visit(node)
+            self.scope_stack.append(self._scope_bindings(node))
+            try:
+                return self.generic_visit(node)
+            finally:
+                self.scope_stack.pop()
         if node.name not in self.mapping.values():  # TODO: need to dedup this logic
             self.mapping[node.name] = node.name = next(self.generator)
-        return self.generic_visit(node)
+        self.scope_stack.append(self._scope_bindings(node))
+        try:
+            return self.generic_visit(node)
+        finally:
+            self.scope_stack.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
@@ -338,7 +421,7 @@ class VariableShortener(NodeTransformer):
         """
         if node.id in self.mapping.values():  # TODO: make .values() more efficient
             return node
-        if self.keep_global_variables and node.id in self.public_global_names:
+        if self.keep_global_variables and self._is_preserved_public_global_reference(node.id):
             return self.generic_visit(node)
         if self.keep_global_variables and self._is_node_global(node):
             if node.id in self.mapping:
@@ -656,8 +739,19 @@ class _F(_a.MetaPathFinder):
  def find_spec(self,fullname,path=None,target=None):
   if fullname not in _M:return None
   return _u.spec_from_loader(fullname,_L(fullname),is_package=fullname in _P)
+def _R(name,run_name):
+ spec=_u.spec_from_loader(run_name,_L(name),is_package=name in _P)
+ module=_u.module_from_spec(spec)
+ module.__name__=run_name
+ module.__package__=name if name in _P else name.rpartition('.')[0]
+ if name in _P:module.__path__=[]
+ _s.modules[run_name]=module
+ _s.modules.setdefault(name,module)
+ _L(name).exec_module(module)
+ return module
 _s.meta_path.insert(0,_F())
-for _m in {entry_modules!r}:__import__(_m)
+if {entry_modules!r}:_R({entry_modules!r}[0],'__main__')
+for _m in {entry_modules!r}[1:]:__import__(_m)
 """
     return bundle_runtime.strip() + "\n"
 

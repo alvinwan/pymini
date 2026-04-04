@@ -102,6 +102,39 @@ def test_minify_does_not_crash_when_returning_parameter_names():
     assert simplified_return.value.value == 1
     assert modules == ["main"]
 
+
+def test_minify_preserves_global_names_without_breaking_shadowed_locals(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            x = 1
+
+            def f():
+                x = 2
+                return x
+
+            print(f(), x)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "2 1\n"
+    assert modules == ["main"]
+
+
 def test_minify_updates_cross_file_imports():
     cleaned, modules = minify(
         [
@@ -188,4 +221,32 @@ def test_minify_fuses_files_into_single_module(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "9\n"
+    assert modules == ["bundle"]
+
+
+def test_minify_bundle_runs_entry_module_as_main(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            if __name__ == "__main__":
+                print("ran")
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+        output_single_file=True,
+    )
+
+    bundle_path = tmp_path / "bundle.py"
+    bundle_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(bundle_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "ran\n"
     assert modules == ["bundle"]
