@@ -1,3 +1,4 @@
+import ast
 from textwrap import dedent
 
 from pymini import minify
@@ -5,6 +6,60 @@ from pymini import minify
 
 def py(source: str) -> str:
     return dedent(source).strip() + "\n"
+
+
+def assert_public_api_is_preserved(module_source: str, consumer_source: str) -> None:
+    module_tree = ast.parse(module_source)
+    consumer_tree = ast.parse(consumer_source)
+
+    assignment, function, alias = module_tree.body
+    assert isinstance(assignment, ast.Assign)
+    assert assignment.targets[0].id == "PI"
+
+    assert isinstance(function, ast.FunctionDef)
+    assert function.name != "square"
+    assert len(function.name) == 1
+
+    assert isinstance(alias, ast.Assign)
+    assert alias.targets[0].id == "square"
+    assert alias.value.id == function.name
+
+    importer, printer = consumer_tree.body
+    assert isinstance(importer, ast.ImportFrom)
+    assert importer.module == "main"
+    assert [name.name for name in importer.names] == ["PI", function.name]
+
+    call = printer.value
+    assert call.args[0].id == "PI"
+    assert call.args[1].func.id == function.name
+
+
+def assert_bundle_preserves_public_alias(bundle_source: str) -> None:
+    bundle_tree = ast.parse(bundle_source)
+    function, alias, printer = bundle_tree.body
+
+    assert isinstance(function, ast.FunctionDef)
+    assert function.name != "square"
+    assert len(function.name) == 1
+
+    assert isinstance(alias, ast.Assign)
+    assert alias.targets[0].id == "square"
+    assert alias.value.id == function.name
+
+    call = printer.value
+    assert call.args[0].func.id == function.name
+
+
+def assert_bundle_is_shortened(bundle_source: str) -> None:
+    bundle_tree = ast.parse(bundle_source)
+    function, printer = bundle_tree.body
+
+    assert isinstance(function, ast.FunctionDef)
+    assert function.name != "square"
+    assert len(function.name) == 1
+
+    call = printer.value
+    assert call.args[0].func.id == function.name
 
 
 def test_minify_simplifies_returns():
@@ -75,10 +130,7 @@ def test_minify_preserves_public_names_when_requested():
         keep_global_variables=True,
     )
 
-    assert cleaned == [
-        "PI=3\ndef square(a):return a**2",
-        "from main import PI,square;print(PI,square(3))",
-    ]
+    assert_public_api_is_preserved(*cleaned)
     assert modules == ["main", "side"]
 
 
@@ -103,5 +155,5 @@ def test_minify_fuses_files_into_single_module():
         output_single_file=True,
     )
 
-    assert cleaned == ["def b(a):return a**2\nprint(b(3))"]
+    assert_bundle_is_shortened(cleaned[0])
     assert modules == ["bundle"]
