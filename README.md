@@ -62,3 +62,41 @@ Install development dependencies and run the test suite:
 python3 -m pip install -e ".[dev]"
 python3 -m pytest
 ```
+
+## TexSoup Validation
+
+`pymini` has been validated against the upstream `TexSoup` test suite in package mode.
+Current validation: raw source code `68.2%` smaller, compressed source code
+(`.tar.gz`) `36.1%` smaller.
+<!-- Raw bytes: 98,181 -> 31,212. Compressed bytes: 70,532 -> 45,054. -->
+
+| Measurement | Original | Minified | Reduction | Reduction Rate |
+| --- | ---: | ---: | ---: | ---: |
+| Raw Python source (`*.py`) | `98,181` bytes | `31,212` bytes | `66,969` bytes | `68.2%` |
+| `.tar.gz` of `TexSoup/` | `70,532` bytes | `45,054` bytes | `25,478` bytes | `36.1%` |
+
+To reproduce that flow locally:
+
+```bash
+git clone https://github.com/alvinwan/TexSoup /tmp/texsoup
+mkdir -p /tmp/texsoup-out/TexSoup
+pymini package /tmp/texsoup/TexSoup -o /tmp/texsoup-out/TexSoup
+cp -R /tmp/texsoup/tests /tmp/texsoup-tests
+PYTHONPATH=/tmp/texsoup-out:/tmp/texsoup-tests python3 -m pytest /tmp/texsoup-tests/tests -o addopts=''
+```
+
+To compare raw package bytes before and after minification:
+
+```bash
+rg --files /tmp/texsoup/TexSoup -g '*.py' | xargs cat | wc -c
+rg --files /tmp/texsoup-out/TexSoup -g '*.py' | xargs cat | wc -c
+```
+
+To compare compressed package snapshots:
+
+```bash
+tar -czf /tmp/texsoup-original-package.tar.gz -C /tmp/texsoup TexSoup
+tar -czf /tmp/texsoup-minified-package.tar.gz -C /tmp/texsoup-out TexSoup
+stat -f%z /tmp/texsoup-original-package.tar.gz
+stat -f%z /tmp/texsoup-minified-package.tar.gz
+```

@@ -1,9 +1,11 @@
 import ast
+import keyword
 import subprocess
 import sys
 from textwrap import dedent
 
 from pymini import minify
+from pymini.utils import variable_name_generator
 
 
 def py(source: str) -> str:
@@ -34,6 +36,26 @@ def assert_public_api_is_preserved(module_source: str, consumer_source: str) -> 
     call = printer.value
     assert call.args[0].id == "PI"
     assert call.args[1].func.id == function.name
+
+
+def assert_cross_file_imports_are_rewritten(module_source: str, consumer_source: str, modules: list[str]) -> None:
+    module_tree = ast.parse(module_source)
+    consumer_tree = ast.parse(consumer_source)
+
+    assignment, function = module_tree.body
+    assert isinstance(assignment, ast.Assign)
+
+    assert isinstance(function, ast.FunctionDef)
+    assert function.name != "square"
+    assert len(function.name) == 1
+
+    importer, call = consumer_tree.body
+    assert isinstance(importer, ast.ImportFrom)
+    assert importer.module == modules[0]
+    assert [name.name for name in importer.names] == [function.name]
+
+    assert isinstance(call, ast.Expr)
+    assert call.value.func.id == function.name
 
 
 def assert_bundle_preserves_public_alias(bundle_source: str) -> None:
@@ -70,6 +92,33 @@ def test_minify_simplifies_returns():
     assert modules == ["main"]
 
 
+def test_minify_handles_subscript_callables(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            callbacks = {"main": lambda: 1}
+            print(callbacks["main"]())
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n"
+    assert modules == ["main"]
+
+
 def test_minify_does_not_crash_when_returning_parameter_names():
     cleaned, modules = minify(
         py(
@@ -101,6 +150,14 @@ def test_minify_does_not_crash_when_returning_parameter_names():
     assert isinstance(simplified_return.value, ast.Constant)
     assert simplified_return.value.value == 1
     assert modules == ["main"]
+
+
+def test_variable_name_generator_skips_python_keywords():
+    generator = variable_name_generator()
+    names = [next(generator) for _ in range(500)]
+
+    assert all(name.isidentifier() for name in names)
+    assert all(not keyword.iskeyword(name) for name in names)
 
 
 def test_minify_preserves_global_names_without_breaking_shadowed_locals(tmp_path):
@@ -135,6 +192,386 @@ def test_minify_preserves_global_names_without_breaking_shadowed_locals(tmp_path
     assert modules == ["main"]
 
 
+def test_minify_keeps_local_aliases_in_function_scope(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def f():
+                parsed, src = (1, 2)
+                return parsed + src
+
+            print(f())
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "3\n"
+    assert modules == ["main"]
+
+
+def test_minify_keeps_generated_aliases_valid_around_decorators(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            import functools
+
+            def deco(fn):
+                @functools.wraps(fn)
+                def wrapped():
+                    return functools.partial(fn)()
+
+                return wrapped
+
+            @deco
+            def f():
+                return 1
+
+            print(f())
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n"
+    assert modules == ["main"]
+
+
+def test_minify_keeps_comprehension_bindings_in_scope(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def pairs(values):
+                return [(key, index) for index, key in enumerate(values)]
+
+            print(pairs(["a", "b"]))
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "[('a', 0), ('b', 1)]\n"
+    assert modules == ["main"]
+
+
+def test_minify_preserves_dunder_method_names(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Token(str):
+                def __new__(cls, text="", position=None):
+                    self = str.__new__(cls, text)
+                    self.position = position
+                    return self
+
+            print(Token("x", position=1).position)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n"
+    assert modules == ["main"]
+
+
+def test_minify_rewrites_public_class_references_in_attribute_targets(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Token(str):
+                pass
+
+            Token.Empty = Token("")
+            print(isinstance(Token.Empty, Token))
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "True\n"
+    assert modules == ["main"]
+
+
+def test_minify_preserves_decorated_method_names(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class C:
+                @property
+                def value(self):
+                    return self._value
+
+                @value.setter
+                def value(self, new_value):
+                    self._value = new_value
+
+            c = C()
+            c.value = 2
+            print(c.value)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "2\n"
+    assert modules == ["main"]
+
+
+def test_minify_preserves_class_attribute_names(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Token:
+                token_begin = 1
+                token_end = token_begin
+
+            print(Token.token_begin, Token.token_end)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1 1\n"
+    assert modules == ["main"]
+
+
+def test_minify_preserves_top_level_class_names_in_library_mode(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Token:
+                pass
+
+            print(Token.__name__)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "Token\n"
+    assert modules == ["main"]
+
+
+def test_minify_keeps_reassigned_locals_on_one_name(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def wrap():
+                iterator = 1
+                iterator = iterator + 1
+                return iterator
+
+            print(wrap())
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "2\n"
+    assert modules == ["main"]
+
+
+def test_minify_keeps_loop_bindings_consistent(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def collect(values):
+                total = []
+                for value in values:
+                    total.append(value)
+                return total
+
+            print(collect([1, 2]))
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "[1, 2]\n"
+    assert modules == ["main"]
+
+
+def test_minify_does_not_rename_attribute_method_calls(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def f():
+                items = [1, 2]
+                return items.index(2)
+
+            print(f())
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n"
+    assert modules == ["main"]
+
+
+def test_minify_preserves_parameters_inside_comprehensions(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class TexArgs(list):
+                def __contains__(self, item):
+                    return any([item == arg for arg in self])
+
+            args = TexArgs(["x"])
+            print("x" in args)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "True\n"
+    assert modules == ["main"]
+
+
 def test_minify_updates_cross_file_imports():
     cleaned, modules = minify(
         [
@@ -157,8 +594,8 @@ def test_minify_updates_cross_file_imports():
         ["main", "side"],
     )
 
-    assert cleaned == ["b=3\ndef d(c):return c**2", "from e import d;d(3)"]
-    assert modules == ["e", "f"]
+    assert_cross_file_imports_are_rewritten(*cleaned, modules)
+    assert modules != ["main", "side"]
 
 
 def test_minify_preserves_public_names_when_requested():
