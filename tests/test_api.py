@@ -1178,6 +1178,176 @@ def test_minify_reuses_short_argument_names_per_function_scope(tmp_path):
     assert modules == ["main"]
 
 
+def test_minify_keeps_recursive_functions_callable_when_reusing_local_names(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def recur(value):
+                if value <= 0:
+                    return 0
+                return recur(value - 1)
+
+            print(recur(3))
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+        rename_arguments=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "0\n"
+    assert modules == ["main"]
+
+
+def test_minify_keeps_unrenamed_parameter_assignments_stable(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def choose(x, flag):
+                if flag:
+                    x = 2
+                return x
+
+            print(choose(1, False))
+            print(choose(1, True))
+            """
+        ),
+        "main",
+        rename_arguments=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n2\n"
+    assert modules == ["main"]
+
+
+def test_minify_rewrites_renamed_methods_on_local_instances(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Demo:
+                def test(self):
+                    return 1
+
+            instance = Demo()
+            print(instance.test())
+            """
+        ),
+        "main",
+        rename_arguments=True,
+        keep_module_names=True,
+    )
+
+    assert ".test(" not in cleaned[0]
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n"
+    assert modules == ["main"]
+
+
+def test_minify_rewrites_constructor_method_keywords_when_renaming_arguments(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Demo:
+                def scale(self, long_value):
+                    return long_value
+
+            print(Demo().scale(long_value=1))
+            """
+        ),
+        "main",
+        rename_arguments=True,
+        keep_module_names=True,
+    )
+
+    assert "long_value=" not in cleaned[0]
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n"
+    assert modules == ["main"]
+
+
+def test_minify_keeps_import_alias_argument_metadata(tmp_path):
+    cleaned, modules = minify(
+        [
+            py(
+                """
+                def square(long_value):
+                    return long_value * long_value
+                """
+            ),
+            py(
+                """
+                from main import square as g
+
+                print(g(long_value=3))
+                """
+            ),
+        ],
+        ["main", "side"],
+        keep_module_names=True,
+        rename_arguments=True,
+    )
+
+    assert "long_value=" not in cleaned[1]
+
+    main_path = tmp_path / "main.py"
+    side_path = tmp_path / "side.py"
+    main_path.write_text(cleaned[0], encoding="utf-8")
+    side_path.write_text(cleaned[1], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(side_path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "9\n"
+    assert modules == ["main", "side"]
+
+
 def test_minify_fuses_files_into_single_module(tmp_path):
     cleaned, modules = minify(
         [

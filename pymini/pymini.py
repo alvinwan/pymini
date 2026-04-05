@@ -292,6 +292,7 @@ class VariableShortener(NodeTransformer):
         self.public_global_names = set()
         self.scope_stack = []
         self.local_rename_scopes = []
+        self.instance_type_scopes = [{}]
         self.class_context_stack = []
         self.class_member_mappings = {}
         self.callable_argument_infos = {}
@@ -329,12 +330,33 @@ class VariableShortener(NodeTransformer):
         return self.mapping.get(old_name)
 
     def _rename_local_identifier(self, old_name):
+        if old_name in self.mapping_values:
+            return old_name
         scope = self.local_rename_scopes[-1]
         if old_name not in scope["mapping"]:
             new_name = next(scope["generator"])
             scope["mapping"][old_name] = new_name
             scope["used_names"].add(new_name)
         return scope["mapping"][old_name]
+
+    def _push_instance_scope(self):
+        self.instance_type_scopes.append({})
+
+    def _pop_instance_scope(self):
+        self.instance_type_scopes.pop()
+
+    def _set_instance_type(self, name, class_name):
+        scope = self.instance_type_scopes[-1]
+        if class_name is None:
+            scope.pop(name, None)
+        else:
+            scope[name] = class_name
+
+    def _lookup_instance_type(self, name):
+        for scope in reversed(self.instance_type_scopes):
+            if name in scope:
+                return scope[name]
+        return None
 
     def _append_public_alias(self, old_name, new_name):
         if old_name != new_name:
@@ -530,16 +552,21 @@ class VariableShortener(NodeTransformer):
         if not isinstance(func, ast.Attribute):
             return None
         base_name = func.value.id if isinstance(func.value, ast.Name) else None
-        if base_name is None:
-            return None
         class_context = self._current_class_context()
-        if class_context is not None and base_name in (
-            class_context["receiver_names"]
-            | {class_context["old_name"], class_context["new_name"]}
-        ):
-            return class_context["argument_infos"].get(func.attr)
-        if base_name in self.class_method_argument_infos:
-            return self.class_method_argument_infos[base_name].get(func.attr)
+        if base_name is not None:
+            if class_context is not None and base_name in (
+                class_context["receiver_names"]
+                | {class_context["old_name"], class_context["new_name"]}
+            ):
+                return class_context["argument_infos"].get(func.attr)
+            instance_class = self._lookup_instance_type(base_name)
+            if instance_class in self.class_method_argument_infos:
+                return self.class_method_argument_infos[instance_class].get(func.attr)
+            if base_name in self.class_method_argument_infos:
+                return self.class_method_argument_infos[base_name].get(func.attr)
+        receiver_class = self._receiver_class_name(func.value)
+        if receiver_class in self.class_method_argument_infos:
+            return self.class_method_argument_infos[receiver_class].get(func.attr)
         return None
 
     def _rewrite_keywords_as_positional(self, node, argument_info):
@@ -686,13 +713,15 @@ class VariableShortener(NodeTransformer):
         return False
 
     def _is_active_parameter_name(self, name):
-        if self.rename_arguments:
-            return False
         for scope in reversed(self.scope_stack):
             if name in scope["globals"]:
                 continue
             if name in scope["bindings"]:
-                return name in scope["args"]
+                if name not in scope["args"]:
+                    return False
+                if not self.rename_arguments:
+                    return True
+                return name not in scope.get("renamed_args", set())
         return False
 
     def _local_scope_state(self, node):
@@ -711,6 +740,31 @@ class VariableShortener(NodeTransformer):
             "used_names": used_names,
             "generator": variable_name_generator(used_names),
         }
+
+    def _receiver_class_name(self, node):
+        if isinstance(node, ast.Name):
+            return self._lookup_instance_type(node.id)
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name):
+                if func.id in self.class_member_mappings or func.id in self.class_method_argument_infos:
+                    return func.id
+                class_context = self._current_class_context()
+                if class_context is not None and func.id in {
+                    class_context["old_name"],
+                    class_context["new_name"],
+                }:
+                    return func.id
+        return None
+
+    def _record_instance_assignment(self, target, value):
+        class_name = self._receiver_class_name(value)
+        if isinstance(target, ast.Name):
+            self._set_instance_type(target.id, class_name)
+            return
+        if isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                self._record_instance_assignment(element, value)
 
     def _visit_ImportOrImportFrom(self, node):
         """Shorten imported library names.
@@ -784,9 +838,11 @@ class VariableShortener(NodeTransformer):
             }
             self.class_context_stack.append(class_context)
             self.scope_stack.append(self._scope_bindings(node))
+            self._push_instance_scope()
             try:
                 node = self.generic_visit(node)
             finally:
+                self._pop_instance_scope()
                 self.scope_stack.pop()
                 self.class_context_stack.pop()
             if class_context["member_mapping"]:
@@ -817,9 +873,11 @@ class VariableShortener(NodeTransformer):
         }
         self.class_context_stack.append(class_context)
         self.scope_stack.append(self._scope_bindings(node))
+        self._push_instance_scope()
         try:
             node = self.generic_visit(node)
         finally:
+            self._pop_instance_scope()
             self.scope_stack.pop()
             self.class_context_stack.pop()
         if class_context["member_mapping"]:
@@ -851,13 +909,16 @@ class VariableShortener(NodeTransformer):
         if self._preserve_function_name(node.name):
             self.scope_stack.append(self._scope_bindings(node))
             self.local_rename_scopes.append(self._local_scope_state(node))
+            self._push_instance_scope()
             try:
                 argument_info = self._rename_function_arguments(node)
+                self.scope_stack[-1]["renamed_args"] = set(argument_info["rename_map"])
                 class_context = self._current_class_context()
                 if class_context is not None:
                     class_context["receiver_names"].update(argument_info["receiver_names"])
                 return self.generic_visit(node)
             finally:
+                self._pop_instance_scope()
                 self.local_rename_scopes.pop()
                 self.scope_stack.pop()
         if self._is_method_definition(node):
@@ -880,8 +941,10 @@ class VariableShortener(NodeTransformer):
                     )
             self.scope_stack.append(self._scope_bindings(node))
             self.local_rename_scopes.append(self._local_scope_state(node))
+            self._push_instance_scope()
             try:
                 argument_info = self._rename_function_arguments(node)
+                self.scope_stack[-1]["renamed_args"] = set(argument_info["rename_map"])
                 if class_context is not None:
                     class_context["receiver_names"].update(argument_info["receiver_names"])
                     if argument_info["rename_map"] or argument_info["positional_params"]:
@@ -893,6 +956,7 @@ class VariableShortener(NodeTransformer):
                         class_context["argument_infos"][node.name] = copied
                 return self.generic_visit(node)
             finally:
+                self._pop_instance_scope()
                 self.local_rename_scopes.pop()
                 self.scope_stack.pop()
         if self.keep_global_variables and self._is_node_global(node):
@@ -901,22 +965,28 @@ class VariableShortener(NodeTransformer):
                 self._append_public_alias(old_name, node.name)
             self.scope_stack.append(self._scope_bindings(node))
             self.local_rename_scopes.append(self._local_scope_state(node))
+            self._push_instance_scope()
             try:
                 argument_info = self._rename_function_arguments(node)
+                self.scope_stack[-1]["renamed_args"] = set(argument_info["rename_map"])
                 self._record_callable_argument_info(old_name, node.name, argument_info)
                 return self.generic_visit(node)
             finally:
+                self._pop_instance_scope()
                 self.local_rename_scopes.pop()
                 self.scope_stack.pop()
         if node.name not in self.mapping_values:
             node.name = self._rename_identifier(node.name)
         self.scope_stack.append(self._scope_bindings(node))
         self.local_rename_scopes.append(self._local_scope_state(node))
+        self._push_instance_scope()
         try:
             argument_info = self._rename_function_arguments(node)
+            self.scope_stack[-1]["renamed_args"] = set(argument_info["rename_map"])
             self._record_callable_argument_info(old_name, node.name, argument_info)
             return self.generic_visit(node)
         finally:
+            self._pop_instance_scope()
             self.local_rename_scopes.pop()
             self.scope_stack.pop()
 
@@ -989,10 +1059,18 @@ class VariableShortener(NodeTransformer):
                 else:
                     self.visit(target)
             node.value = self.visit(node.value)
+            for target in node.targets:
+                self._record_instance_assignment(target, node.value)
             return node
         for target in node.targets:
-            self._rename_assignment_target(target)
-        return self.generic_visit(node)
+            if self._binding_names_from_target(target):
+                self._rename_assignment_target(target)
+            else:
+                self.visit(target)
+        node.value = self.visit(node.value)
+        for target in node.targets:
+            self._record_instance_assignment(target, node.value)
+        return node
 
     def visit_For(self, node):
         if not self._should_preserve_binding_targets(node):
@@ -1039,17 +1117,24 @@ class VariableShortener(NodeTransformer):
     def visit_Attribute(self, node):
         node.value = self.visit(node.value)
         base_name = node.value.id if isinstance(node.value, ast.Name) else None
-        if base_name is None:
-            return node
         attribute_mapping = None
         class_context = self._current_class_context()
-        if class_context is not None and base_name in {
-            class_context["old_name"],
-            class_context["new_name"],
-        } | class_context["receiver_names"]:
-            attribute_mapping = class_context["member_mapping"]
-        elif base_name in self.class_member_mappings:
-            attribute_mapping = self.class_member_mappings[base_name]
+        if base_name is not None:
+            if class_context is not None and base_name in {
+                class_context["old_name"],
+                class_context["new_name"],
+            } | class_context["receiver_names"]:
+                attribute_mapping = class_context["member_mapping"]
+            else:
+                instance_class = self._lookup_instance_type(base_name)
+                if instance_class in self.class_member_mappings:
+                    attribute_mapping = self.class_member_mappings[instance_class]
+                elif base_name in self.class_member_mappings:
+                    attribute_mapping = self.class_member_mappings[base_name]
+        if attribute_mapping is None:
+            receiver_class = self._receiver_class_name(node.value)
+            if receiver_class in self.class_member_mappings:
+                attribute_mapping = self.class_member_mappings[receiver_class]
         if attribute_mapping and node.attr in attribute_mapping:
             node.attr = attribute_mapping[node.attr]
         return node
@@ -1668,7 +1753,11 @@ class ImportedVariableShortener(VariableShortener):
                 if alias.name in shortener.mapping:
                     self.mapping[alias.name] = alias.name = shortener.mapping[alias.name]
                     if imported_name != alias.name and imported_name in self.callable_argument_infos:
-                        self.callable_argument_infos[alias.name] = self.callable_argument_infos.pop(imported_name)
+                        copied = self.callable_argument_infos[imported_name]
+                        self.callable_argument_infos[alias.name] = {
+                            "rename_map": dict(copied["rename_map"]),
+                            "positional_params": list(copied["positional_params"]),
+                        }
             if node.level == 0 and module_name in self.module_to_module:
                 node.module = self.module_to_module[module_name]
         return self.generic_visit(node)

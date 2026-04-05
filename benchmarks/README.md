@@ -11,10 +11,10 @@ the benchmark harness used to reproduce them.
 
 | Input | Original | `pymini` size | `pymini` speed | `pyminifier` size | `pyminifier` speed | `python-minifier` size | `python-minifier` speed |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `pyminifier.py` | `1,355` bytes | `438` bytes, `67.7%` | `1.9 ms` | `611` bytes, `54.9%` | `0.4 ms` | `1,020` bytes, `24.7%` | `1.6 ms` |
-| `pyminify.py` | `1,990` bytes | `935` bytes, `53.0%` | `5.4 ms` | `1,540` bytes, `22.6%` | `1.3 ms` | `983` bytes, `50.6%` | `4.1 ms` |
-| `TexSoup/*.py` | `98,181` bytes | `24,722` bytes, `74.8%` | `175.6 ms` | `34,643` bytes, `64.7%` | `28.0 ms` | `83,303` bytes, `15.2%` | `118.3 ms` |
-| `TexSoup.tar.gz` | `23,656` bytes | `9,208` bytes, `61.1%` | `175.6 ms` | `9,725` bytes, `58.9%` | `28.0 ms` | `21,509` bytes, `9.1%` | `118.3 ms` |
+| `pyminifier.py` | `1,355` bytes | `438` bytes, `67.7%` | `2.1 ms` | `611` bytes, `54.9%` | `0.4 ms` | `1,020` bytes, `24.7%` | `1.7 ms` |
+| `pyminify.py` | `1,990` bytes | `935` bytes, `53.0%` | `5.9 ms` | `1,540` bytes, `22.6%` | `1.2 ms` | `983` bytes, `50.6%` | `4.3 ms` |
+| `TexSoup/*.py` | `98,181` bytes | `24,288` bytes, `75.3%` | `127.5 ms` | `34,643` bytes, `64.7%` | `29.7 ms` | `83,303` bytes, `15.2%` | `123.6 ms` |
+| `TexSoup.tar.gz` | `23,101` bytes | `8,363` bytes, `63.8%` | `127.5 ms` | `9,718` bytes, `57.9%` | `29.7 ms` | `21,497` bytes, `6.9%` | `123.6 ms` |
 
 `pymini` is benchmarked with `--rename-modules --rename-global-variables --rename-arguments`.
 `TexSoup/*.py` compares validated package outputs. `pymini` uses package mode;
@@ -38,10 +38,10 @@ PYTHONPATH=. .venv/bin/python benchmarks/benchmark_speed.py --pyminifier-root /t
 `pymini` has been validated against the upstream `TexSoup` test suite in
 package mode with `--rename-modules --rename-global-variables --rename-arguments`.
 Current validation: upstream pytest passes (`78` tests), raw source code is
-`74.8%` smaller, and compressed source code (`.tar.gz`) is `61.1%` smaller
+`75.3%` smaller, and compressed source code (`.tar.gz`) is `63.8%` smaller
 when measured on clean `.py`-only package snapshots.
 
-<!-- Raw bytes: 98,181 -> 24,722. Compressed bytes: 23,656 -> 9,208. -->
+<!-- Raw bytes: 98,181 -> 24,288. Compressed bytes: 23,101 -> 8,363. -->
 
 To reproduce that flow locally:
 

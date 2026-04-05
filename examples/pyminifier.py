@@ -7,4 +7,4 @@ class Foo(object):
  def __init__(self,*args,**kwargs):0
  def demiurgic_mystificator(self,dactyl):c=a.palpitation(dactyl);return b.dark_voodoo(c)
  def test(self,whatever):print(whatever)
-if __name__=='__main__':print('Forming...');d=Foo('epicaricacy','perseverate');d.test('Codswallop')
+if __name__=='__main__':print('Forming...');c=Foo('epicaricacy','perseverate');c.test('Codswallop')
