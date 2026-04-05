@@ -2,8 +2,8 @@
 
 `pymini` is an AST-based Python minifier for scripts and packages. It preserves
 package layout by default, can emit a single-file bundle when asked, and can
-shrink Python code by roughly `30%` to `90%` depending on the codebase and
-whether you compare raw source or compressed archives.
+shrink Python code by roughly `15%` to `70%` on the checked-in fixtures and
+validated package benchmarks.
 
 - [Getting Started](#getting-started)
 - [Installation](#installation)
@@ -46,7 +46,7 @@ Current checked-in fixtures:
 | `tests/examples/pyminifier.py` | `1,355` bytes | `511` bytes | `62.3%` |
 | `tests/examples/pyminify.py` | `1,990` bytes | `981` bytes | `50.7%` |
 | `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `33,107` bytes | `66.3%` |
-| `TexSoup/` compressed source (`.tar.gz`) | `70,532` bytes | `11,850` bytes | `83.2%` |
+| `TexSoup/` compressed source (`.tar.gz`) | `23,118` bytes | `11,368` bytes | `50.8%` |
 
 For baseline comparisons, speed results, and TexSoup validation details, see
 [benchmarks/README.md](./benchmarks/README.md).
