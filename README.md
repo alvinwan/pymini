@@ -2,7 +2,7 @@
 
 `pymini` is an AST-based Python minifier for scripts and packages. It preserves
 package layout by default, can emit a single-file bundle when asked, and can
-shrink Python code by roughly `50%` to `74%` on the checked-in fixtures and
+shrink Python code by roughly `50%` to `75%` on the checked-in fixtures and
 validated package benchmarks when aggressive renaming is enabled.
 
 - [Getting Started](#getting-started)
@@ -44,10 +44,10 @@ Current checked-in fixtures, using
 
 | Input | Original | Minified | Reduction |
 | --- | ---: | ---: | ---: |
-| `tests/examples/pyminifier.py` | `1,355` bytes | `444` bytes | `67.2%` |
+| `tests/examples/pyminifier.py` | `1,355` bytes | `438` bytes | `67.7%` |
 | `tests/examples/pyminify.py` | `1,990` bytes | `935` bytes | `53.0%` |
-| `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `25,621` bytes | `73.9%` |
-| `TexSoup/` compressed source (`.tar.gz`) | `23,119` bytes | `9,209` bytes | `60.2%` |
+| `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `24,722` bytes | `74.8%` |
+| `TexSoup/` compressed source (`.tar.gz`) | `23,656` bytes | `9,208` bytes | `61.1%` |
 
 For baseline comparisons, speed results, and TexSoup validation details, see
 [benchmarks/README.md](./benchmarks/README.md).

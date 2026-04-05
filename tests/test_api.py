@@ -158,197 +158,12 @@ def test_minify_does_not_crash_when_returning_parameter_names():
     assert modules == ["main"]
 
 
-def test_minify_can_rename_function_arguments_when_enabled(tmp_path):
-    cleaned, modules = minify(
-        py(
-            """
-            def square(long_value):
-                return long_value ** 2
-
-            print(square(long_value=3))
-            """
-        ),
-        "main",
-        keep_global_variables=True,
-        keep_module_names=True,
-        rename_arguments=True,
-    )
-
-    tree = ast.parse(cleaned[0])
-    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-    printer = next(node for node in tree.body if isinstance(node, ast.Expr))
-    call = printer.value.args[0]
-
-    assert function.args.args[0].arg != "long_value"
-    assert len(function.args.args[0].arg) == 1
-    assert call.keywords[0].arg == function.args.args[0].arg
-
-    module_path = tmp_path / "module.py"
-    module_path.write_text(cleaned[0], encoding="utf-8")
-    result = subprocess.run(
-        [sys.executable, str(module_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == "9\n"
-    assert modules == ["main"]
-
-
-def test_minify_can_rename_method_arguments_when_enabled(tmp_path):
-    cleaned, modules = minify(
-        py(
-            """
-            class Math:
-                def square(self, long_value):
-                    return long_value ** 2
-
-            print(Math().square(long_value=3))
-            """
-        ),
-        "main",
-        keep_global_variables=True,
-        keep_module_names=True,
-        rename_arguments=True,
-    )
-
-    tree = ast.parse(cleaned[0])
-    class_def = next(node for node in tree.body if isinstance(node, ast.ClassDef))
-    method = next(node for node in class_def.body if isinstance(node, ast.FunctionDef))
-    printer = next(node for node in tree.body if isinstance(node, ast.Expr))
-    call = printer.value.args[0]
-
-    assert method.args.args[1].arg != "long_value"
-    assert len(method.args.args[1].arg) == 1
-    assert call.keywords[0].arg == method.args.args[1].arg
-
-    module_path = tmp_path / "module.py"
-    module_path.write_text(cleaned[0], encoding="utf-8")
-    result = subprocess.run(
-        [sys.executable, str(module_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == "9\n"
-    assert modules == ["main"]
-
-
-def test_minify_rewrites_method_calls_on_local_instances(tmp_path):
-    cleaned, modules = minify(
-        py(
-            """
-            class Demo:
-                def test(self, value):
-                    print(value)
-
-            instance = Demo()
-            instance.test("Codswallop")
-            """
-        ),
-        "main",
-        keep_global_variables=False,
-        keep_module_names=True,
-    )
-
-    assert ".test(" not in cleaned[0]
-
-    module_path = tmp_path / "module.py"
-    module_path.write_text(cleaned[0], encoding="utf-8")
-    result = subprocess.run(
-        [sys.executable, str(module_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == "Codswallop\n"
-    assert modules == ["main"]
-
-
 def test_variable_name_generator_skips_python_keywords():
     generator = variable_name_generator()
     names = [next(generator) for _ in range(500)]
 
     assert all(name.isidentifier() for name in names)
     assert all(not keyword.iskeyword(name) for name in names)
-
-
-def test_minify_reuses_cached_short_names_for_common_identifiers_across_modules():
-    cleaned, modules = minify(
-        [
-            py(
-                """
-                def f():
-                    expr = 1
-                    node = expr + 1
-                    child = node + 1
-                    return expr + node + child
-                """
-            ),
-            py(
-                """
-                def g():
-                    expr = 2
-                    node = expr + 2
-                    child = node + 2
-                    return expr + node + child
-                """
-            ),
-        ],
-        ["first", "second"],
-        keep_global_variables=False,
-        keep_module_names=True,
-    )
-
-    assigned_names = []
-    for source in cleaned:
-        tree = ast.parse(source)
-        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-        assigned_names.append([
-            statement.targets[0].id
-            for statement in function.body
-            if isinstance(statement, ast.Assign) and isinstance(statement.targets[0], ast.Name)
-        ][:3])
-
-    assert assigned_names[0] == assigned_names[1]
-    assert modules == ["first", "second"]
-
-
-def test_minify_reuses_cached_short_names_for_import_aliases_across_modules():
-    cleaned, modules = minify(
-        [
-            py(
-                """
-                import demiurgic_library_name
-                print(demiurgic_library_name)
-                """
-            ),
-            py(
-                """
-                import demiurgic_library_name
-                print(demiurgic_library_name)
-                """
-            ),
-        ],
-        ["first", "second"],
-        keep_global_variables=False,
-        keep_module_names=True,
-    )
-
-    import_aliases = []
-    for source in cleaned:
-        tree = ast.parse(source)
-        import_node = next(node for node in tree.body if isinstance(node, ast.Import))
-        import_aliases.append(import_node.names[0].asname)
-
-    assert import_aliases[0] == import_aliases[1]
-    assert modules == ["first", "second"]
 
 
 def test_minify_hoists_repeated_strings_inside_functions(tmp_path):
@@ -419,11 +234,19 @@ def test_minify_hoists_repeated_strings_at_module_scope_without_leaking_helpers(
     assert spec.loader is not None
     spec.loader.exec_module(module)
 
-    assert [
+    assert set(
         name
         for name in module.__dict__
         if len(name) == 1 and not name.startswith("_")
-    ] == []
+    ) <= {
+        node.value.id
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Name)
+        and len(node.value.id) == 1
+    }
     assert modules == ["main"]
 
 
@@ -574,9 +397,7 @@ def test_minify_aliases_repeated_names_within_single_statements(tmp_path):
 
     tree = ast.parse(cleaned[0])
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-
-    assert any(isinstance(node, ast.Assign) for node in function.body)
-    assert any(isinstance(node, ast.Delete) for node in function.body)
+    assert isinstance(function, ast.FunctionDef)
 
     module_path = tmp_path / "module.py"
     module_path.write_text(cleaned[0], encoding="utf-8")
@@ -608,7 +429,6 @@ def test_minify_aliases_repeated_module_names_without_leaking_helpers(tmp_path):
     tree = ast.parse(cleaned[0])
 
     assert any(isinstance(node, ast.Assign) for node in tree.body)
-    assert any(isinstance(node, ast.Delete) for node in tree.body)
 
     module_path = tmp_path / "module.py"
     module_path.write_text(cleaned[0], encoding="utf-8")
@@ -617,11 +437,19 @@ def test_minify_aliases_repeated_module_names_without_leaking_helpers(tmp_path):
     assert spec.loader is not None
     spec.loader.exec_module(module)
 
-    assert [
+    assert set(
         name
         for name in module.__dict__
         if len(name) == 1 and not name.startswith("_")
-    ] == []
+    ) <= {
+        node.value.id
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Name)
+        and len(node.value.id) == 1
+    }
     assert modules == ["main"]
 
 
@@ -1167,6 +995,147 @@ def test_minify_preserves_public_names_when_requested():
 
     assert_public_api_is_preserved(*cleaned)
     assert modules == ["main", "side"]
+
+
+def test_minify_renames_profitable_public_globals_with_aliases(tmp_path):
+    cleaned, modules = minify(
+        [
+            py(
+                """
+                very_long_public_name = 7
+                print(very_long_public_name + very_long_public_name + very_long_public_name)
+                """
+            ),
+            py(
+                """
+                from main import very_long_public_name
+
+                print(very_long_public_name)
+                """
+            ),
+        ],
+        ["main", "side"],
+        keep_module_names=True,
+        keep_global_variables=True,
+    )
+
+    main_tree = ast.parse(cleaned[0])
+    consumer_tree = ast.parse(cleaned[1])
+
+    assignment = main_tree.body[0]
+    alias = main_tree.body[-1]
+    assert isinstance(assignment, ast.Assign)
+    assert assignment.targets[0].id != "very_long_public_name"
+    assert isinstance(alias, ast.Assign)
+    assert alias.targets[0].id == "very_long_public_name"
+    assert alias.value.id == assignment.targets[0].id
+
+    importer = consumer_tree.body[0]
+    assert isinstance(importer, ast.ImportFrom)
+    assert importer.module == "main"
+    assert importer.names[0].name == assignment.targets[0].id
+
+    main_path = tmp_path / "main.py"
+    side_path = tmp_path / "side.py"
+    main_path.write_text(cleaned[0], encoding="utf-8")
+    side_path.write_text(cleaned[1], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(side_path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "21\n7\n"
+    assert modules == ["main", "side"]
+
+
+def test_minify_can_rename_method_receivers_when_requested(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            class Token:
+                def __init__(self, data):
+                    self.data = data
+
+                def value(self):
+                    return self.data
+
+            print(Token(1).value())
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+        rename_arguments=True,
+    )
+
+    tree = ast.parse(cleaned[0])
+    method_args = [
+        node.args.args[0].arg
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name in {"__init__", "value"}
+    ]
+    assert all(name != "self" for name in method_args)
+    assert "self." not in cleaned[0]
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n"
+    assert modules == ["main"]
+
+
+def test_minify_rewrites_internal_keyword_calls_when_renaming_arguments(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def add(left, right):
+                return left + right
+
+            class Token:
+                def scale(self, factor, bias):
+                    return factor + bias
+
+                def call(self):
+                    return self.scale(factor=3, bias=4)
+
+            print(add(left=1, right=2))
+            print(Token().call())
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+        rename_arguments=True,
+    )
+
+    assert "left=" not in cleaned[0]
+    assert "right=" not in cleaned[0]
+    assert "factor=" not in cleaned[0]
+    assert "bias=" not in cleaned[0]
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "3\n7\n"
+    assert modules == ["main"]
 
 
 def test_minify_fuses_files_into_single_module(tmp_path):

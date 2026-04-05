@@ -34,7 +34,7 @@ def build_parser() -> ArgumentParser:
     parser.add_argument(
         '--rename-arguments',
         action='store_true',
-        help='Rename function and method parameter names, including matching internal keyword callers.',
+        help='Rename function and method arguments, including internal keyword call sites when safe.',
     )
     parser.add_argument('--single-file', action='store_true', help=SUPPRESS)
     parser.add_argument('-o', '--output', help='Path to the output directory', default='./')

@@ -19,16 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_DIR = ROOT / "tests" / "examples"
 DEFAULT_TEXSOUP_ROOT = Path("/tmp/pymini-texsoup-repo/TexSoup")
 DEFAULT_PYMINIFIER_ROOT = Path("/tmp/pymini-pyminifier-src/pyminifier-2.1")
-PYMINI_BENCHMARK_KWARGS = {
+PYMINI_AGGRESSIVE_OPTIONS = {
     "keep_module_names": False,
     "keep_global_variables": False,
     "rename_arguments": True,
 }
-PYMINI_CLI_FLAGS = [
-    "--rename-modules",
-    "--rename-global-variables",
-    "--rename-arguments",
-]
 
 
 def benchmark_transform(
@@ -57,7 +52,12 @@ def benchmark_transform(
 
 def pymini_single_file_transform(path: Path):
     def transform(source: str) -> str:
-        outputs, _ = minify(source, path.stem, **PYMINI_BENCHMARK_KWARGS)
+        outputs, _ = minify(
+            source,
+            path.stem,
+            keep_global_variables=False,
+            rename_arguments=True,
+        )
         return outputs[0]
 
     return transform
@@ -108,7 +108,7 @@ def benchmark_package_api(
         minify(
             sources,
             modules,
-            **PYMINI_BENCHMARK_KWARGS,
+            **PYMINI_AGGRESSIVE_OPTIONS,
         )
     samples = []
     outputs = None
@@ -117,7 +117,7 @@ def benchmark_package_api(
         outputs, _ = minify(
             sources,
             modules,
-            **PYMINI_BENCHMARK_KWARGS,
+            **PYMINI_AGGRESSIVE_OPTIONS,
         )
         samples.append(perf_counter() - start)
     raw_bytes = sum(len(source.encode()) for source in sources)
@@ -139,7 +139,17 @@ def benchmark_package_cli(package_root: Path, *, iterations: int) -> dict[str, f
         output_dir = Path(tempfile.mkdtemp(prefix="pymini-bench-"))
         try:
             start = perf_counter()
-            rc = cli_main(["package", str(package_root), *PYMINI_CLI_FLAGS, "-o", str(output_dir)])
+            rc = cli_main(
+                [
+                    "package",
+                    str(package_root),
+                    "--rename-modules",
+                    "--rename-global-variables",
+                    "--rename-arguments",
+                    "-o",
+                    str(output_dir),
+                ]
+            )
             samples.append(perf_counter() - start)
             if rc != 0:
                 raise RuntimeError(f"pymini CLI returned {rc}")

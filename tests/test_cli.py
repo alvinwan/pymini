@@ -236,10 +236,14 @@ def test_cli_can_rename_arguments_when_requested(tmp_path):
     write_py(
         source_dir / "main.py",
         """
-        def square(long_value):
-            return long_value ** 2
+        class Token:
+            def __init__(self, value):
+                self.value = value
 
-        print(square(long_value=3))
+            def show(self):
+                return self.value
+
+        print(Token(3).show())
         """,
     )
 
@@ -252,15 +256,12 @@ def test_cli_can_rename_arguments_when_requested(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
+    output = (output_dir / "main.py").read_text(encoding="utf-8")
+    assert "self." not in output
 
-    tree = ast.parse((output_dir / "main.py").read_text(encoding="utf-8"))
-    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-    printer = next(node for node in tree.body if isinstance(node, ast.Expr))
-    call = printer.value.args[0]
-
-    assert function.args.args[0].arg != "long_value"
-    assert call.keywords[0].arg == function.args.args[0].arg
-    assert run_python_file(output_dir / "main.py").stdout == "9\n"
+    execution = run_python_file(output_dir / "main.py")
+    assert execution.returncode == 0, execution.stderr
+    assert execution.stdout == "3\n"
 
 
 def test_cli_package_mode_supports_relative_star_reexports(tmp_path):
