@@ -122,6 +122,12 @@ class ParentSetter(NodeTransformer):
         return node
 
 
+def attach_parents(node, parent):
+    node.parent = parent
+    ParentSetter().visit(node)
+    return node
+
+
 class CommentRemover(NodeTransformer):
     """Drop all comments, both single-line and docstrings.
     
@@ -150,7 +156,7 @@ class CommentRemover(NodeTransformer):
     def visit_Expr(self, node):
         if isinstance(node.value, ast.Constant):
             if len(node.parent.body) == 1:  # if body is just the comment
-                return ast.parse('0').body[0]  # replace comment with 0
+                return attach_parents(ast.parse('0').body[0], node.parent)  # replace comment with 0
             return None  # otherwise, remove comment
         return node
 
@@ -180,6 +186,7 @@ class VariableShortener(NodeTransformer):
     # change.
     def __init__(self, generator, mapping=None, modules=(), keep_global_variables=False):
         self.mapping = mapping or {}
+        self.mapping_values = set(self.mapping.values())
         self.generator = generator
         self.nodes_to_append = []
         self.public_global_names = set()
@@ -189,8 +196,10 @@ class VariableShortener(NodeTransformer):
         self.modules = set(modules)  # don't alias variables imported from these modules
         self.keep_global_variables = keep_global_variables
         self.module_name_reference_cache = {}
+        self.module_attribute_reference_cache = {}
         self.public_class_reference_cache = {}
         self.public_member_reference_cache = {}
+        self.scope_binding_cache = {}
 
     def _is_node_global(self, node):
         """Check if a node is global."""
@@ -200,8 +209,13 @@ class VariableShortener(NodeTransformer):
 
     def _rename_identifier(self, old_name):
         if old_name not in self.mapping:
-            self.mapping[old_name] = next(self.generator)
+            self._register_mapping(old_name, next(self.generator))
         return self.mapping[old_name]
+
+    def _register_mapping(self, old_name, new_name):
+        self.mapping[old_name] = new_name
+        self.mapping_values.add(new_name)
+        return new_name
 
     def _append_public_alias(self, old_name, new_name):
         if old_name != new_name:
@@ -270,6 +284,17 @@ class VariableShortener(NodeTransformer):
         self.public_class_reference_cache[cache_key] = count
         return count
 
+    def _module_attribute_reference_counts(self, module):
+        cache_key = id(module)
+        if cache_key in self.module_attribute_reference_cache:
+            return self.module_attribute_reference_cache[cache_key]
+        counts = collections.defaultdict(collections.Counter)
+        for current in ast.walk(module):
+            if isinstance(current, ast.Attribute) and isinstance(current.value, ast.Name):
+                counts[current.value.id][current.attr] += 1
+        self.module_attribute_reference_cache[cache_key] = counts
+        return counts
+
     def _public_member_reference_counts(self, class_node, class_name):
         cache_key = (id(class_node), class_name)
         if cache_key in self.public_member_reference_cache:
@@ -286,13 +311,7 @@ class VariableShortener(NodeTransformer):
                 counts[current.attr] += 1
         module = self._containing_module(class_node)
         if module is not None:
-            for current in ast.walk(module):
-                if (
-                    isinstance(current, ast.Attribute)
-                    and isinstance(current.value, ast.Name)
-                    and current.value.id == class_name
-                ):
-                    counts[current.attr] += 1
+            counts.update(self._module_attribute_reference_counts(module).get(class_name, {}))
         self.public_member_reference_cache[cache_key] = counts
         return counts
 
@@ -337,8 +356,9 @@ class VariableShortener(NodeTransformer):
                 return
             if target.id in self.mapping:
                 target.id = self.mapping[target.id]
-            elif create_new and target.id not in self.mapping.values():
-                self.mapping[target.id] = target.id = next(self.generator)
+            elif create_new and target.id not in self.mapping_values:
+                self._register_mapping(target.id, next(self.generator))
+                target.id = self.mapping[target.id]
             return
         if isinstance(target, (ast.Tuple, ast.List)):
             for element in target.elts:
@@ -370,6 +390,9 @@ class VariableShortener(NodeTransformer):
         return False
 
     def _scope_bindings(self, node):
+        cache_key = id(node)
+        if cache_key in self.scope_binding_cache:
+            return self.scope_binding_cache[cache_key]
         bindings = set()
         globals_ = set()
         args = set()
@@ -419,7 +442,9 @@ class VariableShortener(NodeTransformer):
                 continue
             collector.visit(statement)
         bindings.difference_update(globals_)
-        return {"bindings": bindings, "globals": globals_, "args": args}
+        scope = {"bindings": bindings, "globals": globals_, "args": args}
+        self.scope_binding_cache[cache_key] = scope
+        return scope
 
     def _is_preserved_public_global_reference(self, name):
         if name not in self.public_global_names:
@@ -478,7 +503,7 @@ class VariableShortener(NodeTransformer):
                 if isinstance(node, ast.ImportFrom) or alias.name not in self.modules:
                     old = alias.asname or alias.name
                     if len(old) > 1:
-                        self.mapping[old] = alias.asname = next(self.generator)
+                        alias.asname = self._register_mapping(old, next(self.generator))
         return self.generic_visit(node)
 
     visit_Import = _visit_ImportOrImportFrom
@@ -506,7 +531,7 @@ class VariableShortener(NodeTransformer):
         if self.keep_global_variables and self._is_node_global(node):
             if (
                 len(node.name) > 1
-                and node.name not in self.mapping.values()
+                and node.name not in self.mapping_values
                 and self._should_rename_public_class(node, old_name)
             ):
                 node.name = self._rename_identifier(old_name)
@@ -523,17 +548,20 @@ class VariableShortener(NodeTransformer):
                 self.class_member_mappings[old_name] = dict(class_context["member_mapping"])
                 self.class_member_mappings[node.name] = dict(class_context["member_mapping"])
             if class_context["aliases"]:
+                for alias in class_context["aliases"]:
+                    attach_parents(alias, node)
                 node.body.extend(class_context["aliases"])
             if rename_public_class:
+                parent = getattr(node, "parent", None)
                 return [
                     node,
-                    self._generated_assignment(f"{old_name} = {node.name}"),
-                    self._generated_assignment(f"{node.name}.__name__ = {old_name!r}"),
-                    self._generated_assignment(f"{node.name}.__qualname__ = {old_name!r}"),
+                    attach_parents(self._generated_assignment(f"{old_name} = {node.name}"), parent),
+                    attach_parents(self._generated_assignment(f"{node.name}.__name__ = {old_name!r}"), parent),
+                    attach_parents(self._generated_assignment(f"{node.name}.__qualname__ = {old_name!r}"), parent),
                 ]
             return node
-        if node.name not in self.mapping.values():  # TODO: make .values() more efficient
-            self.mapping[node.name] = node.name = next(self.generator)
+        if node.name not in self.mapping_values:
+            node.name = self._register_mapping(node.name, next(self.generator))
         class_context = {"old_name": old_name, "new_name": node.name, "aliases": [], "member_mapping": {}}
         self.class_context_stack.append(class_context)
         self.scope_stack.append(self._scope_bindings(node))
@@ -595,7 +623,7 @@ class VariableShortener(NodeTransformer):
             finally:
                 self.scope_stack.pop()
         if self.keep_global_variables and self._is_node_global(node):
-            if len(node.name) > 1 and node.name not in self.mapping.values():
+            if len(node.name) > 1 and node.name not in self.mapping_values:
                 old_name = node.name
                 node.name = self._rename_identifier(old_name)
                 self._append_public_alias(old_name, node.name)
@@ -604,8 +632,8 @@ class VariableShortener(NodeTransformer):
                 return self.generic_visit(node)
             finally:
                 self.scope_stack.pop()
-        if node.name not in self.mapping.values():  # TODO: need to dedup this logic
-            self.mapping[node.name] = node.name = next(self.generator)
+        if node.name not in self.mapping_values:
+            node.name = self._register_mapping(node.name, next(self.generator))
         self.scope_stack.append(self._scope_bindings(node))
         try:
             return self.generic_visit(node)
@@ -695,8 +723,8 @@ class VariableShortener(NodeTransformer):
         if node.name and not self._should_preserve_binding_targets(node):
             if node.name in self.mapping:
                 node.name = self.mapping[node.name]
-            elif node.name not in self.mapping.values():
-                self.mapping[node.name] = node.name = next(self.generator)
+            elif node.name not in self.mapping_values:
+                node.name = self._register_mapping(node.name, next(self.generator))
         node.type = self.visit(node.type) if node.type is not None else None
         node.body = [self.visit(statement) for statement in node.body]
         return node
@@ -748,25 +776,25 @@ class VariableShortener(NodeTransformer):
         >>> apply('print(demiurgic)')  # saw 'print' 2x but didn't replace
         'print(demiurgic)'
         """
-        if node.id in self.mapping.values():  # TODO: make .values() more efficient
+        if node.id in self.mapping_values:
             return node
         if self._is_preserved_function_parameter_reference(node):
-            return self.generic_visit(node)
+            return node
         if self._is_in_expression_scope(node):
             if node.id in self.mapping:
                 node.id = self.mapping[node.id]
-            return self.generic_visit(node)
+            return node
         if self.keep_global_variables and self._is_preserved_public_global_reference(node.id):
-            return self.generic_visit(node)
+            return node
         if self.keep_global_variables and self._is_node_global(node):
             if node.id in self.mapping:
                 node.id = self.mapping[node.id]
-            return self.generic_visit(node)
+            return node
         # Repeated-name alias insertion used to happen here, but it was removed
         # after it leaked across scopes and decorators in real packages.
         if node.id in self.mapping:
             node.id = self.mapping[node.id]
-        return self.generic_visit(node)
+        return node
 
     def visit_Constant(self, node):
         """Shorten string literals that are repeated.
@@ -817,7 +845,6 @@ class IndependentVariableShorteners(Transformer):
         for module, tree in zip(self.modules, trees):
             self.module_to_shortener[module].transform(tree)
             append_public_aliases(tree, self.module_to_shortener[module].nodes_to_append)
-            ParentSetter().visit(tree)
         return trees
 
 
@@ -937,37 +964,129 @@ class RepeatedStringHoister(Transformer):
 
     def transform(self, *trees):
         for tree in trees:
-            ParentSetter().visit(tree)
             collector = RepeatedStringCollector()
             collector.visit(tree)
-            RepeatedStringRewriter(self.generator, collector.repeated_strings_by_scope).visit(tree)
+            RepeatedStringRewriter(
+                self.generator,
+                collector.repeated_strings_by_scope,
+                collector.reserved_names_by_scope,
+            ).visit(tree)
         return trees
 
 
 class RepeatedStringCollector(ast.NodeVisitor):
     def __init__(self):
         self.scope_stack = []
+        self.reserved_stack = []
         self.repeated_strings_by_scope = {}
+        self.reserved_names_by_scope = {}
+
+    def _add_reserved(self, *names):
+        filtered = [name for name in names if name]
+        if not filtered:
+            return
+        for reserved in self.reserved_stack:
+            reserved.update(filtered)
 
     def _visit_scope(self, node):
         counts = {}
+        reserved = set()
         self.scope_stack.append(counts)
-        for statement in node.body:
-            self.visit(statement)
-        self.scope_stack.pop()
+        self.reserved_stack.append(reserved)
+        try:
+            for statement in node.body:
+                self.visit(statement)
+        finally:
+            self.scope_stack.pop()
+            self.reserved_stack.pop()
         if counts:
             self.repeated_strings_by_scope[id(node)] = counts
+        self.reserved_names_by_scope[id(node)] = reserved
 
     def visit_Module(self, node):
         self._visit_scope(node)
 
     def visit_FunctionDef(self, node):
-        self._visit_scope(node)
+        counts = {}
+        reserved = set()
+        self.scope_stack.append(counts)
+        self.reserved_stack.append(reserved)
+        try:
+            self._add_reserved(node.name)
+            for decorator in node.decorator_list:
+                self.visit(decorator)
+            self.visit(node.args)
+            returns = getattr(node, "returns", None)
+            if returns is not None:
+                self.visit(returns)
+            type_params = getattr(node, "type_params", ())
+            for type_param in type_params:
+                self.visit(type_param)
+            for statement in node.body:
+                self.visit(statement)
+        finally:
+            self.scope_stack.pop()
+            self.reserved_stack.pop()
+        if counts:
+            self.repeated_strings_by_scope[id(node)] = counts
+        self.reserved_names_by_scope[id(node)] = reserved
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_ClassDef(self, node):
-        self._visit_scope(node)
+        counts = {}
+        reserved = set()
+        self.scope_stack.append(counts)
+        self.reserved_stack.append(reserved)
+        try:
+            self._add_reserved(node.name)
+            for decorator in node.decorator_list:
+                self.visit(decorator)
+            for base in node.bases:
+                self.visit(base)
+            for keyword in node.keywords:
+                self.visit(keyword)
+            type_params = getattr(node, "type_params", ())
+            for type_param in type_params:
+                self.visit(type_param)
+            for statement in node.body:
+                self.visit(statement)
+        finally:
+            self.scope_stack.pop()
+            self.reserved_stack.pop()
+        if counts:
+            self.repeated_strings_by_scope[id(node)] = counts
+        self.reserved_names_by_scope[id(node)] = reserved
+
+    def visit_Name(self, node):
+        self._add_reserved(node.id)
+
+    def visit_arg(self, node):
+        self._add_reserved(node.arg)
+        annotation = getattr(node, "annotation", None)
+        if annotation is not None:
+            self.visit(annotation)
+
+    def visit_Global(self, node):
+        self._add_reserved(*node.names)
+
+    visit_Nonlocal = visit_Global
+
+    def visit_ExceptHandler(self, node):
+        self._add_reserved(node.name)
+        if node.type is not None:
+            self.visit(node.type)
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_Import(self, node):
+        for alias in node.names:
+            self._add_reserved(alias.asname or alias.name.split(".", 1)[0])
+
+    def visit_ImportFrom(self, node):
+        for alias in node.names:
+            if alias.name != "*":
+                self._add_reserved(alias.asname or alias.name)
 
     def visit_Constant(self, node):
         if not self.scope_stack or not isinstance(node.value, str):
@@ -981,10 +1100,11 @@ class RepeatedStringCollector(ast.NodeVisitor):
 
 
 class RepeatedStringRewriter(ast.NodeTransformer):
-    def __init__(self, generator, repeated_strings_by_scope):
+    def __init__(self, generator, repeated_strings_by_scope, reserved_names_by_scope):
         super().__init__()
         self.generator = generator
         self.repeated_strings_by_scope = repeated_strings_by_scope
+        self.reserved_names_by_scope = reserved_names_by_scope
         self.scope_stack = []
 
     def _next_safe_name(self, reserved_names):
@@ -1013,7 +1133,7 @@ class RepeatedStringRewriter(ast.NodeTransformer):
             scope_type = "class"
         else:
             scope_type = "function"
-        reserved_names = _reserved_names_in_node(node)
+        reserved_names = set(self.reserved_names_by_scope.get(id(node), ()))
         return {
             value: self._next_safe_name(reserved_names)
             for value, count in counts.items()
@@ -1168,6 +1288,7 @@ class RepeatedNameCollector(ast.NodeVisitor):
     def __init__(self):
         self.counts = {}
         self.bindings = set()
+        self.reserved_names = set()
 
     @classmethod
     def for_statement(cls, statement, allocator):
@@ -1180,28 +1301,32 @@ class RepeatedNameCollector(ast.NodeVisitor):
         ]
         if not repeated:
             return {}
-        reserved_names = _reserved_names_in_node(statement)
+        reserved_names = set(collector.reserved_names)
         return {
             name: allocator(reserved_names)
             for name in repeated
         }
 
     def visit_Name(self, node):
+        self.reserved_names.add(node.id)
         if isinstance(node.ctx, ast.Load):
             self.counts[node.id] = self.counts.get(node.id, 0) + 1
         elif isinstance(node.ctx, ast.Store):
             self.bindings.add(node.id)
 
     def visit_arg(self, node):
+        self.reserved_names.add(node.arg)
         self.bindings.add(node.arg)
 
     def visit_Global(self, node):
+        self.reserved_names.update(node.names)
         self.bindings.update(node.names)
 
     visit_Nonlocal = visit_Global
 
     def visit_ExceptHandler(self, node):
         if node.name:
+            self.reserved_names.add(node.name)
             self.bindings.add(node.name)
         if node.type is not None:
             self.visit(node.type)
@@ -1210,19 +1335,23 @@ class RepeatedNameCollector(ast.NodeVisitor):
 
     def visit_Import(self, node):
         for alias in node.names:
+            self.reserved_names.add(alias.asname or alias.name.split(".", 1)[0])
             self.bindings.add(alias.asname or alias.name.split(".", 1)[0])
 
     def visit_ImportFrom(self, node):
         for alias in node.names:
             if alias.name != "*":
+                self.reserved_names.add(alias.asname or alias.name)
                 self.bindings.add(alias.asname or alias.name)
 
     def visit_FunctionDef(self, node):
+        self.reserved_names.add(node.name)
         self.bindings.add(node.name)
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_ClassDef(self, node):
+        self.reserved_names.add(node.name)
         self.bindings.add(node.name)
 
     def visit_Lambda(self, node):
@@ -1303,7 +1432,7 @@ class ImportedVariableShortener(VariableShortener):
                 if alias.name == "*":
                     continue
                 if alias.name in shortener.mapping:
-                    self.mapping[alias.name] = alias.name = shortener.mapping[alias.name]
+                    alias.name = self._register_mapping(alias.name, shortener.mapping[alias.name])
             if node.level == 0 and module_name in self.module_to_module:
                 node.module = self.module_to_module[module_name]
         return self.generic_visit(node)
@@ -1359,6 +1488,7 @@ def append_public_aliases(tree, aliases):
     for node in aliases:
         inserted = ast.copy_location(node, root)
         inserted._pymini_generated = True
+        attach_parents(inserted, root)
         root.body.append(inserted)
 
 
