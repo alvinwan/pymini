@@ -11,9 +11,9 @@ the benchmark harness used to reproduce them.
 
 | Input | Original | `pymini` size | `pymini` speed | `pyminifier` size | `pyminifier` speed | `python-minifier` size | `python-minifier` speed |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `pyminifier.py` | `1,355` bytes | `511` bytes, `62.3%` | `2.4 ms` | `676` bytes, `50.1%` | `0.4 ms` | `1,020` bytes, `24.7%` | `1.6 ms` |
-| `pyminify.py` | `1,990` bytes | `981` bytes, `50.7%` | `5.4 ms` | `1,605` bytes, `19.3%` | `1.2 ms` | `983` bytes, `50.6%` | `4.1 ms` |
-| `TexSoup/*.py` | `98,181` bytes | `33,107` bytes, `66.3%` | `399.3 ms` | `34,643` bytes, `64.7%` | `31.3 ms` | `83,303` bytes, `15.2%` | `120.8 ms` |
+| `pyminifier.py` | `1,355` bytes | `511` bytes, `62.3%` | `1.7 ms` | `676` bytes, `50.1%` | `0.4 ms` | `1,020` bytes, `24.7%` | `1.7 ms` |
+| `pyminify.py` | `1,990` bytes | `981` bytes, `50.7%` | `5.0 ms` | `1,605` bytes, `19.3%` | `1.2 ms` | `983` bytes, `50.6%` | `4.2 ms` |
+| `TexSoup/*.py` | `98,181` bytes | `33,107` bytes, `66.3%` | `162.1 ms` | `34,643` bytes, `64.7%` | `30.0 ms` | `83,303` bytes, `15.2%` | `121.8 ms` |
 | `TexSoup.tar.gz` | `23,118` bytes | `11,368` bytes, `50.8%` | `—` | `9,741` bytes, `57.9%` | `—` | `21,532` bytes, `6.9%` | `—` |
 
 `TexSoup/*.py` compares validated package outputs. `pymini` uses package mode;

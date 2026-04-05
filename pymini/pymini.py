@@ -1,5 +1,5 @@
 import ast
-import copy
+import collections
 import keyword
 from typing import Dict, List, Optional, Set
 from .utils import variable_name_generator
@@ -62,7 +62,9 @@ class ReturnSimplifier(NodeTransformer):
         for previous, current in zip(body, body[1:]):
             if self._can_simplify_return(previous, current):
                 self.unused_assignments.add(id(previous))
-                current.value = copy.deepcopy(previous.value)
+                # Move the expression directly; the assignment is removed by the
+                # next pass, so we do not need to keep a duplicate subtree here.
+                current.value = previous.value
         return body
 
     def generic_visit(self, node):
@@ -186,6 +188,9 @@ class VariableShortener(NodeTransformer):
         self.class_member_mappings = {}
         self.modules = set(modules)  # don't alias variables imported from these modules
         self.keep_global_variables = keep_global_variables
+        self.module_name_reference_cache = {}
+        self.public_class_reference_cache = {}
+        self.public_member_reference_cache = {}
 
     def _is_node_global(self, node):
         """Check if a node is global."""
@@ -241,39 +246,58 @@ class VariableShortener(NodeTransformer):
     def _public_member_alias_cost(self, old_name):
         return len(f"{old_name}=a")
 
+    def _module_name_reference_counts(self, module):
+        cache_key = id(module)
+        if cache_key in self.module_name_reference_cache:
+            return self.module_name_reference_cache[cache_key]
+        counts = collections.Counter()
+        for current in ast.walk(module):
+            if isinstance(current, ast.Name):
+                counts[current.id] += 1
+        self.module_name_reference_cache[cache_key] = counts
+        return counts
+
     def _public_class_reference_count(self, node, old_name):
+        cache_key = (id(node), old_name)
+        if cache_key in self.public_class_reference_cache:
+            return self.public_class_reference_cache[cache_key]
         module = self._containing_module(node)
         count = 1
         if module is None:
+            self.public_class_reference_cache[cache_key] = count
             return count
-        for current in ast.walk(module):
-            if isinstance(current, ast.Name) and current.id == old_name:
-                count += 1
+        count += self._module_name_reference_counts(module).get(old_name, 0)
+        self.public_class_reference_cache[cache_key] = count
         return count
 
-    def _public_member_reference_count(self, class_node, class_name, member_name):
-        count = 1
+    def _public_member_reference_counts(self, class_node, class_name):
+        cache_key = (id(class_node), class_name)
+        if cache_key in self.public_member_reference_cache:
+            return self.public_member_reference_cache[cache_key]
+        counts = collections.Counter()
         for current in ast.walk(class_node):
-            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load) and current.id == member_name:
-                count += 1
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                counts[current.id] += 1
             elif (
                 isinstance(current, ast.Attribute)
-                and current.attr == member_name
                 and isinstance(current.value, ast.Name)
                 and current.value.id in {"self", "cls", class_name}
             ):
-                count += 1
+                counts[current.attr] += 1
         module = self._containing_module(class_node)
         if module is not None:
             for current in ast.walk(module):
                 if (
                     isinstance(current, ast.Attribute)
-                    and current.attr == member_name
                     and isinstance(current.value, ast.Name)
                     and current.value.id == class_name
                 ):
-                    count += 1
-        return count
+                    counts[current.attr] += 1
+        self.public_member_reference_cache[cache_key] = counts
+        return counts
+
+    def _public_member_reference_count(self, class_node, class_name, member_name):
+        return 1 + self._public_member_reference_counts(class_node, class_name).get(member_name, 0)
 
     def _should_rename_public_class(self, node, old_name):
         return self._rename_savings(
@@ -1331,12 +1355,11 @@ class FileFuser(Fuser):
         return [module_to_tree[module] for module in self.modules]
 
 def append_public_aliases(tree, aliases):
-    root = next(ast.walk(tree))
+    root = tree
     for node in aliases:
         inserted = ast.copy_location(node, root)
         inserted._pymini_generated = True
         root.body.append(inserted)
-    ast.fix_missing_locations(tree)
 
 
 class Unparser:
