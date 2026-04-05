@@ -16,12 +16,20 @@ Checked-in fixture comparison:
 | `tests/examples/pyminifier.py` | `1,355` bytes | `511` bytes, `62.3%` | `676` bytes, `50.1%` | `1,020` bytes, `24.7%` |
 | `tests/examples/pyminify.py` | `1,990` bytes | `981` bytes, `50.7%` | `1,605` bytes, `19.3%` | `983` bytes, `50.6%` |
 
-TexSoup package validation:
+TexSoup package mode (`pymini` only):
 
 | Input | Original | `pymini` | Reduction |
 | --- | ---: | ---: | ---: |
 | `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `33,107` bytes | `66.3%` |
 | `TexSoup/` compressed source (`.tar.gz`) | `70,532` bytes | `11,850` bytes | `83.2%` |
+
+TexSoup file-by-file package comparison. All three outputs pass the upstream
+TexSoup test suite (`78` tests):
+
+| Input | Original | `pymini` | `pyminifier` | `python-minifier` |
+| --- | ---: | ---: | ---: | ---: |
+| `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `32,131` bytes, `67.3%` | `34,643` bytes, `64.7%` | `83,303` bytes, `15.2%` |
+| `TexSoup/` compressed source (`.tar.gz`) | `23,116` bytes | `10,926` bytes, `52.7%` | `9,741` bytes, `57.9%` | `21,532` bytes, `6.9%` |
 
 # Speed
 
@@ -30,10 +38,10 @@ Latency is machine-dependent. Recompute these with
 
 | Input | `pymini` | `pyminifier` | `python-minifier` |
 | --- | ---: | ---: | ---: |
-| `tests/examples/pyminifier.py` | `14.1 ms` | `0.4 ms` | `1.5 ms` |
-| `tests/examples/pyminify.py` | `1227.6 ms` | `1.1 ms` | `4.0 ms` |
-| `TexSoup/` package API | `4928.8 ms` | `—` | `—` |
-| `TexSoup/` package CLI | `5062.0 ms` | `—` | `—` |
+| `tests/examples/pyminifier.py` | `2.5 ms` | `0.4 ms` | `1.6 ms` |
+| `tests/examples/pyminify.py` | `5.7 ms` | `1.2 ms` | `4.2 ms` |
+| `TexSoup/` package API | `410.4 ms` | `—` | `—` |
+| `TexSoup/` package CLI | `414.0 ms` | `—` | `—` |
 
 To reproduce those numbers:
 

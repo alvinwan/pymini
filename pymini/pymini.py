@@ -117,7 +117,7 @@ class ParentSetter(NodeTransformer):
         for child in ast.iter_child_nodes(node):
             child.parent = node
             self.visit(child)
-        return super().visit(node)
+        return node
 
 
 class CommentRemover(NodeTransformer):
@@ -845,7 +845,6 @@ class FusedVariableShortener(Transformer):
             )
             imported.transform(tree)
             append_public_aliases(tree, imported.nodes_to_append)
-            ParentSetter().visit(tree)
             new_trees.append(tree)
         return new_trees
 
@@ -918,8 +917,6 @@ class RepeatedStringHoister(Transformer):
             collector = RepeatedStringCollector()
             collector.visit(tree)
             RepeatedStringRewriter(self.generator, collector.repeated_strings_by_scope).visit(tree)
-            ParentSetter().visit(tree)
-            ast.fix_missing_locations(tree)
         return trees
 
 
@@ -1080,10 +1077,7 @@ class RepeatedNameAliaser(ast.NodeTransformer):
 
     def transform(self, *trees):
         for tree in trees:
-            ParentSetter().visit(tree)
             self.visit(tree)
-            ParentSetter().visit(tree)
-            ast.fix_missing_locations(tree)
         return trees
 
     def _next_safe_name(self, reserved_names):
@@ -1350,6 +1344,13 @@ class Unparser:
     def transform(self, *trees):
         for tree in trees:
             yield ast.unparse(tree)
+
+
+class LocationFixer(Transformer):
+    def transform(self, *trees):
+        for tree in trees:
+            ast.fix_missing_locations(tree)
+        return trees
 
 
 def module_prefixes(module: Optional[str]) -> List[str]:
@@ -1727,6 +1728,7 @@ def minify(sources, modules='main', keep_module_names=False,
         ),
 
         # final post-processing to remove whitespace (minify)
+        LocationFixer(),
         Unparser(),
         WhitespaceRemover(),
     )
