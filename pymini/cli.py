@@ -31,6 +31,11 @@ def build_parser() -> ArgumentParser:
         action='store_true',
         help='Rename top-level globals instead of preserving them through public aliases.',
     )
+    parser.add_argument(
+        '--rename-arguments',
+        action='store_true',
+        help='Rename function and method parameter names, including matching internal keyword callers.',
+    )
     parser.add_argument('--single-file', action='store_true', help=SUPPRESS)
     parser.add_argument('-o', '--output', help='Path to the output directory', default='./')
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
@@ -52,11 +57,11 @@ def effective_mode(args) -> str:
     return BUNDLE_MODE if args.single_file else args.mode
 
 
-def resolve_options(args) -> tuple[str, bool, bool, bool]:
+def resolve_options(args) -> tuple[str, bool, bool, bool, bool]:
     mode = effective_mode(args)
     keep_module_names = not args.rename_modules
     keep_global_variables = not args.rename_global_variables
-    return mode, keep_module_names, keep_global_variables, mode == BUNDLE_MODE
+    return mode, keep_module_names, keep_global_variables, args.rename_arguments, mode == BUNDLE_MODE
 
 
 def resolve_python_files(path: str) -> tuple[list[Path], Optional[Path]]:
@@ -143,7 +148,7 @@ def write_outputs(
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(normalize_argv(argv))
-    mode, keep_module_names, keep_global_variables, output_single_file = resolve_options(args)
+    mode, keep_module_names, keep_global_variables, rename_arguments, output_single_file = resolve_options(args)
     paths, module_root = resolve_python_files(args.path)
     if not paths:
         parser.error(f"no Python files matched {args.path!r}")
@@ -158,6 +163,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         modules,
         keep_module_names=keep_module_names,
         keep_global_variables=keep_global_variables,
+        rename_arguments=rename_arguments,
         output_single_file=output_single_file,
     )
     try:

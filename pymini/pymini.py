@@ -178,23 +178,41 @@ class VariableShortener(NodeTransformer):
     # - preserve-public-API mode can rename top-level classes, methods, and
     #   class-body attributes, but it emits explicit aliases and fixes class
     #   __name__/__qualname__ for compatibility
+    # - repeated source identifiers reuse the first safe short name cached for
+    #   the current run, which improves cross-file compression without
+    #   hardcoding vocabulary-specific rewrites
     # - attribute rewriting is limited to owners we can prove from the AST
     #   (`self`, `cls`, or known class names), not arbitrary dynamic receivers
     #
     # Keep regression coverage in tests/test_api.py and checked-in example
     # outputs in sync via scripts/regenerate_examples.py whenever these rules
     # change.
-    def __init__(self, generator, mapping=None, modules=(), keep_global_variables=False):
+    def __init__(
+        self,
+        generator,
+        mapping=None,
+        modules=(),
+        keep_global_variables=False,
+        rename_arguments=False,
+        reserved_names=None,
+        identifier_name_cache=None,
+    ):
         self.mapping = mapping or {}
         self.mapping_values = set(self.mapping.values())
+        self.reserved_names = set(reserved_names or ())
+        self.identifier_name_cache = identifier_name_cache if identifier_name_cache is not None else {}
         self.generator = generator
         self.nodes_to_append = []
         self.public_global_names = set()
         self.scope_stack = []
+        self.instance_type_stack = [{}]
         self.class_context_stack = []
         self.class_member_mappings = {}
+        self.callable_argument_mappings = {}
+        self.class_method_argument_mappings = {}
         self.modules = set(modules)  # don't alias variables imported from these modules
         self.keep_global_variables = keep_global_variables
+        self.rename_arguments = rename_arguments
         self.module_name_reference_cache = {}
         self.module_attribute_reference_cache = {}
         self.public_class_reference_cache = {}
@@ -209,7 +227,16 @@ class VariableShortener(NodeTransformer):
 
     def _rename_identifier(self, old_name):
         if old_name not in self.mapping:
-            self._register_mapping(old_name, next(self.generator))
+            preferred_name = self.identifier_name_cache.get(old_name)
+            if (
+                preferred_name is not None
+                and preferred_name not in self.mapping_values
+                and preferred_name not in self.reserved_names
+            ):
+                self._register_mapping(old_name, preferred_name)
+            else:
+                self._register_mapping(old_name, next(self.generator))
+                self.identifier_name_cache.setdefault(old_name, self.mapping[old_name])
         return self.mapping[old_name]
 
     def _register_mapping(self, old_name, new_name):
@@ -350,15 +377,117 @@ class VariableShortener(NodeTransformer):
                 names.update(self._binding_names_from_target(element))
         return names
 
+    def _push_instance_scope(self):
+        self.instance_type_stack.append({})
+
+    def _pop_instance_scope(self):
+        self.instance_type_stack.pop()
+
+    def _lookup_instance_type(self, name):
+        for scope in reversed(self.instance_type_stack):
+            if name in scope:
+                return scope[name]
+        return None
+
+    def _clear_instance_bindings(self, names):
+        if not names:
+            return
+        current_scope = self.instance_type_stack[-1]
+        for name in names:
+            current_scope.pop(name, None)
+
+    def _constructor_class_name(self, value):
+        if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+            return None
+        if value.func.id in self.class_member_mappings:
+            return value.func.id
+        return None
+
+    def _update_instance_bindings(self, targets, value):
+        class_name = self._constructor_class_name(value)
+        current_scope = self.instance_type_stack[-1]
+        for target in targets:
+            binding_names = self._binding_names_from_target(target)
+            if not binding_names:
+                continue
+            if class_name is None:
+                self._clear_instance_bindings(binding_names)
+                continue
+            for name in binding_names:
+                current_scope[name] = class_name
+
+    def _function_argument_nodes(self, arguments):
+        return [
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *( [arguments.vararg] if arguments.vararg is not None else [] ),
+            *( [arguments.kwarg] if arguments.kwarg is not None else [] ),
+        ]
+
+    def _should_rename_argument(self, name):
+        return (
+            self.rename_arguments
+            and len(name) > 1
+            and name not in {"self", "cls"}
+            and not self._preserve_function_name(name)
+        )
+
+    def _rename_function_arguments(self, node):
+        argument_mapping = {}
+        for argument in self._function_argument_nodes(node.args):
+            if not self._should_rename_argument(argument.arg):
+                continue
+            old_name = argument.arg
+            new_name = self._rename_identifier(old_name)
+            argument.arg = new_name
+            if old_name != new_name:
+                argument_mapping[old_name] = new_name
+        return argument_mapping
+
+    def _record_callable_argument_mapping(self, old_name, new_name, argument_mapping):
+        if not argument_mapping:
+            return
+        copied = dict(argument_mapping)
+        self.callable_argument_mappings[old_name] = copied
+        self.callable_argument_mappings[new_name] = copied
+
+    def _call_argument_mapping(self, func):
+        if isinstance(func, ast.Name):
+            return self.callable_argument_mappings.get(func.id)
+        if not isinstance(func, ast.Attribute):
+            return None
+        base_name = None
+        if isinstance(func.value, ast.Name):
+            base_name = func.value.id
+        elif isinstance(func.value, ast.Call) and isinstance(func.value.func, ast.Name):
+            base_name = func.value.func.id
+        if base_name is None:
+            return None
+        class_context = self._current_class_context()
+        if class_context is not None and base_name in {
+            "self",
+            "cls",
+            class_context["old_name"],
+            class_context["new_name"],
+        }:
+            return class_context["argument_mappings"].get(func.attr)
+        if base_name in self.class_method_argument_mappings:
+            return self.class_method_argument_mappings[base_name].get(func.attr)
+        return None
+
     def _rename_assignment_target(self, target, create_new=True):
         if isinstance(target, ast.Name):
-            if self._is_active_parameter_name(target.id) or self._preserve_function_name(target.id):
+            if self._is_active_parameter_name(target.id):
+                if target.id in self.mapping:
+                    target.id = self.mapping[target.id]
+                return
+            if self._preserve_function_name(target.id):
                 return
             if target.id in self.mapping:
                 target.id = self.mapping[target.id]
             elif create_new and target.id not in self.mapping_values:
-                self._register_mapping(target.id, next(self.generator))
-                target.id = self.mapping[target.id]
+                target.id = self._rename_identifier(target.id)
             return
         if isinstance(target, (ast.Tuple, ast.List)):
             for element in target.elts:
@@ -457,6 +586,8 @@ class VariableShortener(NodeTransformer):
         return True
 
     def _is_preserved_function_parameter_reference(self, node):
+        if self.rename_arguments:
+            return False
         if self._is_in_function_signature(node):
             return False
         for scope in reversed(self.scope_stack):
@@ -486,13 +617,13 @@ class VariableShortener(NodeTransformer):
         >>> apply('from demiurgic import a')  # single-letter import should be left alone
         'from demiurgic import a'
         >>> print(apply('import demiurgic;demiurgic.palpitation()'))  # TODO: bug - variable should remember object its bound to
+        import demiurgic as a
+        a.palpitation()
+        >>> print(apply('import demiurgic as dei;dei.palpitation()'))
         import demiurgic as c
         c.palpitation()
-        >>> print(apply('import demiurgic as dei;dei.palpitation()'))
-        import demiurgic as d
-        d.palpitation()
         >>> print(apply('import demiurgic;import donotaliasme;from donotaliasme import dolor;'))
-        import demiurgic as e
+        import demiurgic as a
         import donotaliasme
         from donotaliasme import dolor
         """
@@ -503,7 +634,7 @@ class VariableShortener(NodeTransformer):
                 if isinstance(node, ast.ImportFrom) or alias.name not in self.modules:
                     old = alias.asname or alias.name
                     if len(old) > 1:
-                        alias.asname = self._register_mapping(old, next(self.generator))
+                        alias.asname = self._rename_identifier(old)
         return self.generic_visit(node)
 
     visit_Import = _visit_ImportOrImportFrom
@@ -536,17 +667,28 @@ class VariableShortener(NodeTransformer):
             ):
                 node.name = self._rename_identifier(old_name)
                 rename_public_class = old_name != node.name
-            class_context = {"old_name": old_name, "new_name": node.name, "aliases": [], "member_mapping": {}}
+            class_context = {
+                "old_name": old_name,
+                "new_name": node.name,
+                "aliases": [],
+                "member_mapping": {},
+                "argument_mappings": {},
+            }
             self.class_context_stack.append(class_context)
             self.scope_stack.append(self._scope_bindings(node))
+            self._push_instance_scope()
             try:
                 node = self.generic_visit(node)
             finally:
+                self._pop_instance_scope()
                 self.scope_stack.pop()
                 self.class_context_stack.pop()
             if class_context["member_mapping"]:
                 self.class_member_mappings[old_name] = dict(class_context["member_mapping"])
                 self.class_member_mappings[node.name] = dict(class_context["member_mapping"])
+            if class_context["argument_mappings"]:
+                self.class_method_argument_mappings[old_name] = dict(class_context["argument_mappings"])
+                self.class_method_argument_mappings[node.name] = dict(class_context["argument_mappings"])
             if class_context["aliases"]:
                 for alias in class_context["aliases"]:
                     attach_parents(alias, node)
@@ -561,18 +703,29 @@ class VariableShortener(NodeTransformer):
                 ]
             return node
         if node.name not in self.mapping_values:
-            node.name = self._register_mapping(node.name, next(self.generator))
-        class_context = {"old_name": old_name, "new_name": node.name, "aliases": [], "member_mapping": {}}
+            node.name = self._rename_identifier(node.name)
+        class_context = {
+            "old_name": old_name,
+            "new_name": node.name,
+            "aliases": [],
+            "member_mapping": {},
+            "argument_mappings": {},
+        }
         self.class_context_stack.append(class_context)
         self.scope_stack.append(self._scope_bindings(node))
+        self._push_instance_scope()
         try:
             node = self.generic_visit(node)
         finally:
+            self._pop_instance_scope()
             self.scope_stack.pop()
             self.class_context_stack.pop()
         if class_context["member_mapping"]:
             self.class_member_mappings[old_name] = dict(class_context["member_mapping"])
             self.class_member_mappings[node.name] = dict(class_context["member_mapping"])
+        if class_context["argument_mappings"]:
+            self.class_method_argument_mappings[old_name] = dict(class_context["argument_mappings"])
+            self.class_method_argument_mappings[node.name] = dict(class_context["argument_mappings"])
         return node
 
     def visit_FunctionDef(self, node):
@@ -592,15 +745,19 @@ class VariableShortener(NodeTransformer):
         >>> apply('def demiurgic(palpitation): return palpitation\\nholy = demiurgic()')
         'def a(palpitation):\\n    return palpitation\\nholy = a()\\ndemiurgic = a'
         """
+        old_name = node.name
         if self._preserve_function_name(node.name):
             self.scope_stack.append(self._scope_bindings(node))
+            self._push_instance_scope()
             try:
-                return self.generic_visit(node)
+                argument_mapping = self._rename_function_arguments(node)
+                node = self.generic_visit(node)
             finally:
+                self._pop_instance_scope()
                 self.scope_stack.pop()
+            return node
         if self._is_method_definition(node):
             class_context = self._current_class_context()
-            old_name = node.name
             class_name = class_context["old_name"] if class_context is not None else ""
             if (
                 len(old_name) > 1
@@ -618,27 +775,44 @@ class VariableShortener(NodeTransformer):
                         self._generated_assignment(f"{old_name} = {node.name}")
                     )
             self.scope_stack.append(self._scope_bindings(node))
+            self._push_instance_scope()
             try:
-                return self.generic_visit(node)
+                argument_mapping = self._rename_function_arguments(node)
+                node = self.generic_visit(node)
             finally:
+                self._pop_instance_scope()
                 self.scope_stack.pop()
+            if class_context is not None and argument_mapping:
+                copied = dict(argument_mapping)
+                class_context["argument_mappings"][old_name] = copied
+                class_context["argument_mappings"][node.name] = copied
+            return node
         if self.keep_global_variables and self._is_node_global(node):
             if len(node.name) > 1 and node.name not in self.mapping_values:
-                old_name = node.name
                 node.name = self._rename_identifier(old_name)
                 self._append_public_alias(old_name, node.name)
             self.scope_stack.append(self._scope_bindings(node))
+            self._push_instance_scope()
             try:
-                return self.generic_visit(node)
+                argument_mapping = self._rename_function_arguments(node)
+                node = self.generic_visit(node)
             finally:
+                self._pop_instance_scope()
                 self.scope_stack.pop()
+            self._record_callable_argument_mapping(old_name, node.name, argument_mapping)
+            return node
         if node.name not in self.mapping_values:
-            node.name = self._register_mapping(node.name, next(self.generator))
+            node.name = self._rename_identifier(node.name)
         self.scope_stack.append(self._scope_bindings(node))
+        self._push_instance_scope()
         try:
-            return self.generic_visit(node)
+            argument_mapping = self._rename_function_arguments(node)
+            node = self.generic_visit(node)
         finally:
+            self._pop_instance_scope()
             self.scope_stack.pop()
+        self._record_callable_argument_mapping(old_name, node.name, argument_mapping)
+        return node
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
@@ -685,6 +859,7 @@ class VariableShortener(NodeTransformer):
                 else:
                     self.visit(target)
             node.value = self.visit(node.value)
+            self._update_instance_bindings(node.targets, node.value)
             return node
         if self.keep_global_variables and self._is_node_global(node):  # TODO: rename but insert var def if worth it
             for target in node.targets:
@@ -694,14 +869,22 @@ class VariableShortener(NodeTransformer):
                 else:
                     self.visit(target)
             node.value = self.visit(node.value)
+            self._update_instance_bindings(node.targets, node.value)
             return node
         for target in node.targets:
-            self._rename_assignment_target(target)
-        return self.generic_visit(node)
+            binding_names = self._binding_names_from_target(target)
+            if binding_names:
+                self._rename_assignment_target(target)
+            else:
+                self.visit(target)
+        node.value = self.visit(node.value)
+        self._update_instance_bindings(node.targets, node.value)
+        return node
 
     def visit_For(self, node):
         if not self._should_preserve_binding_targets(node):
             self._rename_assignment_target(node.target)
+        self._clear_instance_bindings(self._binding_names_from_target(node.target))
         node.iter = self.visit(node.iter)
         node.body = [self.visit(statement) for statement in node.body]
         node.orelse = [self.visit(statement) for statement in node.orelse]
@@ -714,6 +897,8 @@ class VariableShortener(NodeTransformer):
             item.context_expr = self.visit(item.context_expr)
             if item.optional_vars is not None and not self._should_preserve_binding_targets(node):
                 self._rename_assignment_target(item.optional_vars)
+            if item.optional_vars is not None:
+                self._clear_instance_bindings(self._binding_names_from_target(item.optional_vars))
         node.body = [self.visit(statement) for statement in node.body]
         return node
 
@@ -724,17 +909,22 @@ class VariableShortener(NodeTransformer):
             if node.name in self.mapping:
                 node.name = self.mapping[node.name]
             elif node.name not in self.mapping_values:
-                node.name = self._register_mapping(node.name, next(self.generator))
+                node.name = self._rename_identifier(node.name)
+        if node.name:
+            self._clear_instance_bindings({node.name})
         node.type = self.visit(node.type) if node.type is not None else None
         node.body = [self.visit(statement) for statement in node.body]
         return node
 
     def visit_Call(self, node):
         """Apply renamed function names."""
-        if isinstance(node.func, ast.Name):
-            if node.func.id in self.mapping:
-                node.func.id = self.mapping[node.func.id]
-        return self.generic_visit(node)
+        node = self.generic_visit(node)
+        argument_mapping = self._call_argument_mapping(node.func)
+        if argument_mapping:
+            for keyword in node.keywords:
+                if keyword.arg in argument_mapping:
+                    keyword.arg = argument_mapping[keyword.arg]
+        return node
 
     def visit_Attribute(self, node):
         node.value = self.visit(node.value)
@@ -752,6 +942,10 @@ class VariableShortener(NodeTransformer):
             attribute_mapping = class_context["member_mapping"]
         elif base_name in self.class_member_mappings:
             attribute_mapping = self.class_member_mappings[base_name]
+        else:
+            instance_type = self._lookup_instance_type(base_name)
+            if instance_type in self.class_member_mappings:
+                attribute_mapping = self.class_member_mappings[instance_type]
         if attribute_mapping and node.attr in attribute_mapping:
             node.attr = attribute_mapping[node.attr]
         return node
@@ -829,14 +1023,28 @@ class VariableShortener(NodeTransformer):
 
 
 class IndependentVariableShorteners(Transformer):
-    def __init__(self, names, modules, keep_global_variables=False):
+    def __init__(
+        self,
+        names,
+        modules,
+        keep_global_variables=False,
+        rename_arguments=False,
+        reuse_names_across_modules=True,
+    ):
         super().__init__()
-        self.generator = variable_name_generator(names)
+        self.reserved_names = set(names)
+        self.identifier_name_cache = {} if reuse_names_across_modules else None
+        self.generator_factory = lambda: variable_name_generator(set(self.reserved_names))
+        self.generator = self.generator_factory()
+        self.reuse_names_across_modules = reuse_names_across_modules
         self.module_to_shortener = {
             module: VariableShortener(
-                self.generator,
+                self.generator if not self.reuse_names_across_modules else self.generator_factory(),
                 modules=modules,
-                keep_global_variables=keep_global_variables
+                keep_global_variables=keep_global_variables,
+                rename_arguments=rename_arguments,
+                reserved_names=self.reserved_names,
+                identifier_name_cache=self.identifier_name_cache if self.identifier_name_cache is not None else {},
             ) for module in modules
         }
         self.modules = modules
@@ -858,19 +1066,43 @@ class FusedVariableShortener(Transformer):
     >>> fused.modules
     ['donotrenameme']
     """
-    def __init__(self, generator, modules, module_to_shortener, keep_module_names=False):
+    def __init__(
+        self,
+        generator,
+        modules,
+        module_to_shortener,
+        keep_module_names=False,
+        name_cache=None,
+    ):
         super().__init__()
         self.generator = generator
         self.modules = list(modules)
         self.module_to_shortener = module_to_shortener
         self.keep_module_names = keep_module_names
+        self.name_cache = name_cache if name_cache is not None else {}
+
+    def _next_cached_name(self, old_name, used_names):
+        preferred = self.name_cache.get(old_name)
+        if preferred is not None and preferred not in used_names:
+            used_names.add(preferred)
+            return preferred
+        while True:
+            candidate = next(self.generator)
+            if candidate not in used_names:
+                used_names.add(candidate)
+                self.name_cache.setdefault(old_name, candidate)
+                return candidate
 
     def transform(self, *trees):
         original_modules = list(self.module_to_shortener)
         packages = package_modules(original_modules)
         module_to_module = {}
         if not self.keep_module_names:
-            module_to_module = {module: next(self.generator) for module in original_modules}
+            used_names = set()
+            module_to_module = {
+                module: self._next_cached_name(module, used_names)
+                for module in original_modules
+            }
 
             # NOTE: Must modify in-place, as this list is passed to Fuser
             for i, module in enumerate(original_modules):
@@ -890,6 +1122,8 @@ class FusedVariableShortener(Transformer):
                 mapping=fused_mapping,
                 current_module=module,
                 keep_global_variables=True,
+                reserved_names=self.module_to_shortener[module].reserved_names,
+                identifier_name_cache=self.module_to_shortener[module].identifier_name_cache,
                 module_to_module={_module: value for _module, value in module_to_module.items() if module != _module},
                 module_to_shortener={_module: value for _module, value in self.module_to_shortener.items() if module != _module},
                 packages=packages,
@@ -958,18 +1192,20 @@ def _reserved_names_in_node(node):
 
 
 class RepeatedStringHoister(Transformer):
-    def __init__(self, generator):
+    def __init__(self, generator_factory, name_cache=None):
         super().__init__()
-        self.generator = generator
+        self.generator_factory = generator_factory
+        self.name_cache = name_cache if name_cache is not None else {}
 
     def transform(self, *trees):
         for tree in trees:
             collector = RepeatedStringCollector()
             collector.visit(tree)
             RepeatedStringRewriter(
-                self.generator,
+                self.generator_factory(),
                 collector.repeated_strings_by_scope,
                 collector.reserved_names_by_scope,
+                self.name_cache,
             ).visit(tree)
         return trees
 
@@ -1100,18 +1336,24 @@ class RepeatedStringCollector(ast.NodeVisitor):
 
 
 class RepeatedStringRewriter(ast.NodeTransformer):
-    def __init__(self, generator, repeated_strings_by_scope, reserved_names_by_scope):
+    def __init__(self, generator, repeated_strings_by_scope, reserved_names_by_scope, name_cache=None):
         super().__init__()
         self.generator = generator
         self.repeated_strings_by_scope = repeated_strings_by_scope
         self.reserved_names_by_scope = reserved_names_by_scope
+        self.name_cache = name_cache if name_cache is not None else {}
         self.scope_stack = []
 
-    def _next_safe_name(self, reserved_names):
+    def _next_safe_name(self, value, reserved_names):
+        preferred = self.name_cache.get(value)
+        if preferred is not None and preferred not in reserved_names:
+            reserved_names.add(preferred)
+            return preferred
         while True:
             candidate = next(self.generator)
             if candidate not in reserved_names:
                 reserved_names.add(candidate)
+                self.name_cache.setdefault(value, candidate)
                 return candidate
 
     def _is_profitable(self, value, count, scope_type):
@@ -1135,7 +1377,7 @@ class RepeatedStringRewriter(ast.NodeTransformer):
             scope_type = "function"
         reserved_names = set(self.reserved_names_by_scope.get(id(node), ()))
         return {
-            value: self._next_safe_name(reserved_names)
+            value: self._next_safe_name(value, reserved_names)
             for value, count in counts.items()
             if count > 1 and len(repr(value)) > 4 and self._is_profitable(value, count, scope_type)
         }
@@ -1215,20 +1457,28 @@ def _is_terminal_statement(node):
 
 
 class RepeatedNameAliaser(ast.NodeTransformer):
-    def __init__(self, generator):
+    def __init__(self, generator_factory, name_cache=None):
         super().__init__()
-        self.generator = generator
+        self.generator_factory = generator_factory
+        self.name_cache = name_cache if name_cache is not None else {}
+        self.generator = None
 
     def transform(self, *trees):
         for tree in trees:
+            self.generator = self.generator_factory()
             self.visit(tree)
         return trees
 
-    def _next_safe_name(self, reserved_names):
+    def _next_safe_name(self, name, reserved_names):
+        preferred = self.name_cache.get(name)
+        if preferred is not None and preferred not in reserved_names:
+            reserved_names.add(preferred)
+            return preferred
         while True:
             candidate = next(self.generator)
             if candidate not in reserved_names:
                 reserved_names.add(candidate)
+                self.name_cache.setdefault(name, candidate)
                 return candidate
 
     def _alias_assignment(self, mapping):
@@ -1303,7 +1553,7 @@ class RepeatedNameCollector(ast.NodeVisitor):
             return {}
         reserved_names = set(collector.reserved_names)
         return {
-            name: allocator(reserved_names)
+            name: allocator(name, reserved_names)
             for name in repeated
         }
 
@@ -1818,7 +2068,7 @@ class WhitespaceRemover(NodeTransformer):
 
 
 def minify(sources, modules='main', keep_module_names=False,
-           keep_global_variables=False, output_single_file=False,
+           keep_global_variables=False, rename_arguments=False, output_single_file=False,
            single_file_module='bundle'):
     """Uglify source code. Simplify, minify, and obfuscate.
 
@@ -1829,11 +2079,11 @@ def minify(sources, modules='main', keep_module_names=False,
     ... square(3)
     ... '''], ['main', 'side'])
     >>> modules
-    ['d', 'e']
+    ['a', 'b']
     >>> sources[0]
-    'b=3\\ndef c(x):return x**2'
+    'a=3\\ndef b(x):return x**2'
     >>> sources[1]
-    'from d import c;c(3)'
+    'from a import b;b(3)'
     """
     if isinstance(sources, str):
         sources = [sources]
@@ -1864,15 +2114,21 @@ def minify(sources, modules='main', keep_module_names=False,
             names=collector.names,
             modules=modules,
             keep_global_variables=keep_global_variables,
+            rename_arguments=rename_arguments,
+            # Cross-module short-name reuse improves package compression, but
+            # bundle mode still needs globally unique exports to avoid import
+            # collisions inside importer namespaces.
+            reuse_names_across_modules=not output_single_file,
         ),  # obscure within files (but not across files)
         fused := FusedVariableShortener(
             generator=ind.generator,
             module_to_shortener=ind.module_to_shortener,
             modules=ind.modules,
             keep_module_names=keep_module_names,
+            name_cache=ind.identifier_name_cache,
         ),  # obfuscate across files
-        RepeatedStringHoister(ind.generator),
-        RepeatedNameAliaser(ind.generator),
+        RepeatedStringHoister(ind.generator_factory, ind.identifier_name_cache),
+        RepeatedNameAliaser(ind.generator_factory, ind.identifier_name_cache),
 
         # optionally fuse files
         fuser := (

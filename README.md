@@ -2,8 +2,8 @@
 
 `pymini` is an AST-based Python minifier for scripts and packages. It preserves
 package layout by default, can emit a single-file bundle when asked, and can
-shrink Python code by roughly `15%` to `70%` on the checked-in fixtures and
-validated package benchmarks.
+shrink Python code by roughly `50%` to `74%` on the checked-in fixtures and
+validated package benchmarks when aggressive renaming is enabled.
 
 - [Getting Started](#getting-started)
 - [Installation](#installation)
@@ -39,14 +39,15 @@ sources, modules = minify(
 
 # Compression
 
-Current checked-in fixtures:
+Current checked-in fixtures, using
+`--rename-modules --rename-global-variables --rename-arguments`:
 
 | Input | Original | Minified | Reduction |
 | --- | ---: | ---: | ---: |
-| `tests/examples/pyminifier.py` | `1,355` bytes | `511` bytes | `62.3%` |
-| `tests/examples/pyminify.py` | `1,990` bytes | `981` bytes | `50.7%` |
-| `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `33,107` bytes | `66.3%` |
-| `TexSoup/` compressed source (`.tar.gz`) | `23,118` bytes | `11,368` bytes | `50.8%` |
+| `tests/examples/pyminifier.py` | `1,355` bytes | `444` bytes | `67.2%` |
+| `tests/examples/pyminify.py` | `1,990` bytes | `935` bytes | `53.0%` |
+| `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `25,621` bytes | `73.9%` |
+| `TexSoup/` compressed source (`.tar.gz`) | `23,119` bytes | `9,209` bytes | `60.2%` |
 
 For baseline comparisons, speed results, and TexSoup validation details, see
 [benchmarks/README.md](./benchmarks/README.md).
