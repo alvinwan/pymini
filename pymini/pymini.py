@@ -99,6 +99,105 @@ class VariableNameCollector(NodeVisitor):
         self.names.add(node.id)
 
 
+class ScopeLocalNameCollector(ast.NodeVisitor):
+    def __init__(self):
+        self.reserved_names = set()
+        self.bindings = set()
+        self.loads = set()
+
+    def visit_Name(self, node):
+        self.reserved_names.add(node.id)
+        if isinstance(node.ctx, ast.Store):
+            self.bindings.add(node.id)
+        elif isinstance(node.ctx, ast.Load):
+            self.loads.add(node.id)
+
+    def visit_arg(self, node):
+        self.reserved_names.add(node.arg)
+        self.bindings.add(node.arg)
+        if node.annotation is not None:
+            self.visit(node.annotation)
+
+    def visit_Global(self, node):
+        self.reserved_names.update(node.names)
+
+    visit_Nonlocal = visit_Global
+
+    def visit_ExceptHandler(self, node):
+        if node.name:
+            self.reserved_names.add(node.name)
+            self.bindings.add(node.name)
+        if node.type is not None:
+            self.visit(node.type)
+        for statement in node.body:
+            self.visit(statement)
+
+    def visit_Import(self, node):
+        for alias in node.names:
+            bound_name = alias.asname or alias.name.split(".", 1)[0]
+            self.reserved_names.add(bound_name)
+            self.bindings.add(bound_name)
+
+    def visit_ImportFrom(self, node):
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            bound_name = alias.asname or alias.name
+            self.reserved_names.add(bound_name)
+            self.bindings.add(bound_name)
+
+    def _visit_nested_function(self, node):
+        self.reserved_names.add(node.name)
+        self.bindings.add(node.name)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for default in node.args.defaults:
+            self.visit(default)
+        for default in node.args.kw_defaults:
+            if default is not None:
+                self.visit(default)
+        for argument in (
+            [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+            + ([node.args.vararg] if node.args.vararg is not None else [])
+            + ([node.args.kwarg] if node.args.kwarg is not None else [])
+        ):
+            if argument is not None and argument.annotation is not None:
+                self.visit(argument.annotation)
+        returns = getattr(node, "returns", None)
+        if returns is not None:
+            self.visit(returns)
+
+    def visit_FunctionDef(self, node):
+        self._visit_nested_function(node)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node):
+        self.reserved_names.add(node.name)
+        self.bindings.add(node.name)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for base in node.bases:
+            self.visit(base)
+        for keyword in node.keywords:
+            self.visit(keyword)
+
+    def visit_Lambda(self, node):
+        return None
+
+    def visit_ListComp(self, node):
+        return None
+
+    def visit_SetComp(self, node):
+        return None
+
+    def visit_DictComp(self, node):
+        return None
+
+    def visit_GeneratorExp(self, node):
+        return None
+
+
 class ParentSetter(NodeTransformer):
     """Adds parent attribute to each node.
     
@@ -192,6 +291,7 @@ class VariableShortener(NodeTransformer):
         self.nodes_to_append = []
         self.public_global_names = set()
         self.scope_stack = []
+        self.local_rename_scopes = []
         self.class_context_stack = []
         self.class_member_mappings = {}
         self.callable_argument_infos = {}
@@ -215,6 +315,26 @@ class VariableShortener(NodeTransformer):
                     self.mapping_values.add(candidate)
                     break
         return self.mapping[old_name]
+
+    def _lookup_local_identifier(self, old_name):
+        for scope in reversed(self.local_rename_scopes):
+            if old_name in scope["mapping"]:
+                return scope["mapping"][old_name]
+        return None
+
+    def _lookup_visible_identifier(self, old_name):
+        local_name = self._lookup_local_identifier(old_name)
+        if local_name is not None:
+            return local_name
+        return self.mapping.get(old_name)
+
+    def _rename_local_identifier(self, old_name):
+        scope = self.local_rename_scopes[-1]
+        if old_name not in scope["mapping"]:
+            new_name = next(scope["generator"])
+            scope["mapping"][old_name] = new_name
+            scope["used_names"].add(new_name)
+        return scope["mapping"][old_name]
 
     def _append_public_alias(self, old_name, new_name):
         if old_name != new_name:
@@ -379,7 +499,7 @@ class VariableShortener(NodeTransformer):
             old_name = argument.arg
             if not self._should_rename_argument(old_name):
                 continue
-            new_name = self._rename_identifier(old_name)
+            new_name = self._rename_local_identifier(old_name)
             argument.arg = new_name
             if old_name != new_name:
                 argument_mapping[old_name] = new_name
@@ -448,6 +568,14 @@ class VariableShortener(NodeTransformer):
     def _rename_assignment_target(self, target, create_new=True):
         if isinstance(target, ast.Name):
             if self._is_active_parameter_name(target.id) or self._preserve_function_name(target.id):
+                return
+            if (
+                self.local_rename_scopes
+                and self.scope_stack
+                and target.id in self.scope_stack[-1]["bindings"]
+                and target.id not in self.scope_stack[-1]["globals"]
+            ):
+                target.id = self._rename_local_identifier(target.id)
                 return
             if target.id in self.mapping:
                 target.id = self.mapping[target.id]
@@ -566,6 +694,23 @@ class VariableShortener(NodeTransformer):
             if name in scope["bindings"]:
                 return name in scope["args"]
         return False
+
+    def _local_scope_state(self, node):
+        collector = ScopeLocalNameCollector()
+        collector.visit(node.args)
+        for statement in getattr(node, "body", []):
+            collector.visit(statement)
+        reserved_names = set(collector.reserved_names)
+        for name in collector.loads - collector.bindings:
+            visible_name = self._lookup_visible_identifier(name)
+            if visible_name is not None:
+                reserved_names.add(visible_name)
+        used_names = set(reserved_names)
+        return {
+            "mapping": {},
+            "used_names": used_names,
+            "generator": variable_name_generator(used_names),
+        }
 
     def _visit_ImportOrImportFrom(self, node):
         """Shorten imported library names.
@@ -705,6 +850,7 @@ class VariableShortener(NodeTransformer):
         old_name = node.name
         if self._preserve_function_name(node.name):
             self.scope_stack.append(self._scope_bindings(node))
+            self.local_rename_scopes.append(self._local_scope_state(node))
             try:
                 argument_info = self._rename_function_arguments(node)
                 class_context = self._current_class_context()
@@ -712,6 +858,7 @@ class VariableShortener(NodeTransformer):
                     class_context["receiver_names"].update(argument_info["receiver_names"])
                 return self.generic_visit(node)
             finally:
+                self.local_rename_scopes.pop()
                 self.scope_stack.pop()
         if self._is_method_definition(node):
             class_context = self._current_class_context()
@@ -732,6 +879,7 @@ class VariableShortener(NodeTransformer):
                         self._generated_assignment(f"{old_name} = {node.name}")
                     )
             self.scope_stack.append(self._scope_bindings(node))
+            self.local_rename_scopes.append(self._local_scope_state(node))
             try:
                 argument_info = self._rename_function_arguments(node)
                 if class_context is not None:
@@ -745,26 +893,31 @@ class VariableShortener(NodeTransformer):
                         class_context["argument_infos"][node.name] = copied
                 return self.generic_visit(node)
             finally:
+                self.local_rename_scopes.pop()
                 self.scope_stack.pop()
         if self.keep_global_variables and self._is_node_global(node):
             if len(node.name) > 1 and node.name not in self.mapping_values:
                 node.name = self._rename_identifier(old_name)
                 self._append_public_alias(old_name, node.name)
             self.scope_stack.append(self._scope_bindings(node))
+            self.local_rename_scopes.append(self._local_scope_state(node))
             try:
                 argument_info = self._rename_function_arguments(node)
                 self._record_callable_argument_info(old_name, node.name, argument_info)
                 return self.generic_visit(node)
             finally:
+                self.local_rename_scopes.pop()
                 self.scope_stack.pop()
         if node.name not in self.mapping_values:
             node.name = self._rename_identifier(node.name)
         self.scope_stack.append(self._scope_bindings(node))
+        self.local_rename_scopes.append(self._local_scope_state(node))
         try:
             argument_info = self._rename_function_arguments(node)
             self._record_callable_argument_info(old_name, node.name, argument_info)
             return self.generic_visit(node)
         finally:
+            self.local_rename_scopes.pop()
             self.scope_stack.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
@@ -923,6 +1076,10 @@ class VariableShortener(NodeTransformer):
         """
         if node.id in self.mapping_values:
             return node
+        local_name = self._lookup_local_identifier(node.id)
+        if local_name is not None:
+            node.id = local_name
+            return self.generic_visit(node)
         if self._is_preserved_function_parameter_reference(node):
             return self.generic_visit(node)
         if self._is_in_expression_scope(node):

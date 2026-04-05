@@ -1138,6 +1138,46 @@ def test_minify_rewrites_internal_keyword_calls_when_renaming_arguments(tmp_path
     assert modules == ["main"]
 
 
+def test_minify_reuses_short_argument_names_per_function_scope(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def left(alpha):
+                return alpha + 1
+
+            def right(beta):
+                return beta + 2
+
+            print(left(1), right(2))
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+        rename_arguments=True,
+    )
+
+    tree = ast.parse(cleaned[0])
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    arg_names = [function.args.args[0].arg for function in functions]
+
+    assert len(set(arg_names)) == 1
+    assert len(arg_names[0]) == 1
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "2 4\n"
+    assert modules == ["main"]
+
+
 def test_minify_fuses_files_into_single_module(tmp_path):
     cleaned, modules = minify(
         [
