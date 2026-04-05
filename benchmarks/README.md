@@ -3,39 +3,26 @@
 This directory holds the current size and speed measurements for `pymini`, plus
 the benchmark harness used to reproduce them.
 
-- [Compression](#compression)
-- [Speed](#speed)
+- [Results](#results)
+- [Reproduce](#reproduce)
 - [TexSoup Validation](#texsoup-validation)
 
-# Compression
+# Results
 
-Checked-in fixture comparison:
+| Input | Original | `pymini` size | `pymini` speed | `pyminifier` size | `pyminifier` speed | `python-minifier` size | `python-minifier` speed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `pyminifier.py` | `1,355` bytes | `511` bytes, `62.3%` | `2.4 ms` | `676` bytes, `50.1%` | `0.4 ms` | `1,020` bytes, `24.7%` | `1.6 ms` |
+| `pyminify.py` | `1,990` bytes | `981` bytes, `50.7%` | `5.4 ms` | `1,605` bytes, `19.3%` | `1.2 ms` | `983` bytes, `50.6%` | `4.1 ms` |
+| `TexSoup/*.py` | `98,181` bytes | `33,107` bytes, `66.3%` | `399.3 ms` | `34,643` bytes, `64.7%` | `31.3 ms` | `83,303` bytes, `15.2%` | `120.8 ms` |
+| `TexSoup.tar.gz` | `23,118` bytes | `11,368` bytes, `50.8%` | `—` | `9,741` bytes, `57.9%` | `—` | `21,532` bytes, `6.9%` | `—` |
 
-| Input | Original | `pymini` | `pyminifier` | `python-minifier` |
-| --- | ---: | ---: | ---: | ---: |
-| `tests/examples/pyminifier.py` | `1,355` bytes | `511` bytes, `62.3%` | `676` bytes, `50.1%` | `1,020` bytes, `24.7%` |
-| `tests/examples/pyminify.py` | `1,990` bytes | `981` bytes, `50.7%` | `1,605` bytes, `19.3%` | `983` bytes, `50.6%` |
+`TexSoup/*.py` compares validated package outputs. `pymini` uses package mode;
+the baselines minify each file independently in the preserved package tree. All
+three outputs pass the upstream TexSoup test suite (`78` tests).
 
-TexSoup package validation:
+# Reproduce
 
-| Input | Original | `pymini` | Reduction |
-| --- | ---: | ---: | ---: |
-| `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `33,107` bytes | `66.3%` |
-| `TexSoup/` compressed source (`.tar.gz`) | `70,532` bytes | `11,850` bytes | `83.2%` |
-
-# Speed
-
-Latency is machine-dependent. Recompute these with
-`PYTHONPATH=. .venv/bin/python benchmarks/benchmark_speed.py`.
-
-| Input | `pymini` | `pyminifier` | `python-minifier` |
-| --- | ---: | ---: | ---: |
-| `tests/examples/pyminifier.py` | `14.1 ms` | `0.4 ms` | `1.5 ms` |
-| `tests/examples/pyminify.py` | `1227.6 ms` | `1.1 ms` | `4.0 ms` |
-| `TexSoup/` package API | `4928.8 ms` | `—` | `—` |
-| `TexSoup/` package CLI | `5062.0 ms` | `—` | `—` |
-
-To reproduce those numbers:
+Recompute the speed measurements with:
 
 ```bash
 python3 -m pip install -e ".[dev]" python-minifier
@@ -48,9 +35,9 @@ PYTHONPATH=. .venv/bin/python benchmarks/benchmark_speed.py --pyminifier-root /t
 `pymini` has been validated against the upstream `TexSoup` test suite in
 package mode. Current validation: upstream pytest passes (`78` tests), raw
 source code is `66.3%` smaller, and compressed source code (`.tar.gz`) is
-`83.2%` smaller.
+`50.8%` smaller when measured on clean `.py`-only package snapshots.
 
-<!-- Raw bytes: 98,181 -> 33,107. Compressed bytes: 70,532 -> 11,850. -->
+<!-- Raw bytes: 98,181 -> 33,107. Compressed bytes: 23,118 -> 11,368. -->
 
 To reproduce that flow locally:
 
