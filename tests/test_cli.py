@@ -229,6 +229,40 @@ def test_cli_can_aggressively_rename_globals_in_package_mode(tmp_path):
     assert len(assignment.targets[0].id) == 1
 
 
+def test_cli_can_rename_arguments_when_requested(tmp_path):
+    source_dir = tmp_path / "src"
+    output_dir = tmp_path / "out"
+    source_dir.mkdir()
+    write_py(
+        source_dir / "main.py",
+        """
+        def square(long_value):
+            return long_value ** 2
+
+        print(square(long_value=3))
+        """,
+    )
+
+    result = run_cli(
+        "package",
+        str(source_dir),
+        "--rename-arguments",
+        "-o",
+        str(output_dir),
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    tree = ast.parse((output_dir / "main.py").read_text(encoding="utf-8"))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    printer = next(node for node in tree.body if isinstance(node, ast.Expr))
+    call = printer.value.args[0]
+
+    assert function.args.args[0].arg != "long_value"
+    assert call.keywords[0].arg == function.args.args[0].arg
+    assert run_python_file(output_dir / "main.py").stdout == "9\n"
+
+
 def test_cli_package_mode_supports_relative_star_reexports(tmp_path):
     source_dir = tmp_path / "src"
     output_dir = tmp_path / "out"
