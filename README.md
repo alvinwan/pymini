@@ -46,8 +46,8 @@ Current checked-in fixtures, using
 | --- | ---: | ---: | ---: |
 | `tests/examples/pyminifier.py` | `1,355` bytes | `438` bytes | `67.7%` |
 | `tests/examples/pyminify.py` | `1,990` bytes | `935` bytes | `53.0%` |
-| `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `24,722` bytes | `74.8%` |
-| `TexSoup/` compressed source (`.tar.gz`) | `23,656` bytes | `9,208` bytes | `61.1%` |
+| `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `24,288` bytes | `75.3%` |
+| `TexSoup/` compressed source (`.tar.gz`) | `23,101` bytes | `8,363` bytes | `63.8%` |
 
 For baseline comparisons, speed results, and TexSoup validation details, see
 [benchmarks/README.md](./benchmarks/README.md).

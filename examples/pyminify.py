@@ -1,23 +1,23 @@
 def a(event,context):
- e='RequestType';f='PhysicalResourceId';g='None';h='Status';i='SUCCESS';j='Tags';k='OldResourceProperties';l.info(event);m,n,o,p,q,r,s,t,u=(event,create_cert,add_tags,validate,wait_for_issuance,context,send,reinvoke,acm)
+ c='RequestType';d='PhysicalResourceId';e='None';f='Status';g='SUCCESS';h='Tags';i='OldResourceProperties';l.info(event);j,k,m,n,o,p,q,r,s=(event,create_cert,add_tags,validate,wait_for_issuance,context,send,reinvoke,acm)
  try:
-  b=hashlib.new('md5',(m['RequestId']+m['StackId']).encode()).hexdigest();c=m['ResourceProperties']
-  if m[e]=='Create':
-   m[f]=g;m[f]=n(c,b);o(m[f],c);p(m[f],c)
-   if q(m[f],r):m[h]=i;return s(m)
-   else:return t(m,r)
-  elif m[e]=='Delete':
-   if m[f]!=g:u.delete_certificate(CertificateArn=m[f])
-   m[h]=i;return s(m)
-  elif m[e]=='Update':
-   if replace_cert(m):
-    m[f]=n(c,b);o(m[f],c);p(m[f],c)
-    if not q(m[f],r):return t(m,r)
+  a=hashlib.new('md5',(j['RequestId']+j['StackId']).encode()).hexdigest();b=j['ResourceProperties']
+  if j[c]=='Create':
+   j[d]=e;j[d]=k(b,a);m(j[d],b);n(j[d],b)
+   if o(j[d],p):j[f]=g;return q(j)
+   else:return r(j,p)
+  elif j[c]=='Delete':
+   if j[d]!=e:s.delete_certificate(CertificateArn=j[d])
+   j[f]=g;return q(j)
+  elif j[c]=='Update':
+   if replace_cert(j):
+    j[d]=k(b,a);m(j[d],b);n(j[d],b)
+    if not o(j[d],p):return r(j,p)
    else:
-    if j in m[k]:u.remove_tags_from_certificate(CertificateArn=m[f],Tags=m[k][j])
-    o(m[f],c)
-   m[h]=i;return s(m)
+    if h in j[i]:s.remove_tags_from_certificate(CertificateArn=j[d],Tags=j[i][h])
+    m(j[d],b)
+   j[f]=g;return q(j)
   else:raise RuntimeError('Unknown RequestType')
- except Exception as d:l.exception('');m[h]='FAILED';m['Reason']=str(d);return s(m)
- del (m,n,o,p,q,r,s,t,u)
+ except Exception as b:l.exception('');j[f]='FAILED';j['Reason']=str(b);return q(j)
+ del (j,k,m,n,o,p,q,r,s)
 handler=a
