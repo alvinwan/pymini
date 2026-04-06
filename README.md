@@ -1,9 +1,8 @@
 # pymini
 
-`pymini` is an AST-based Python minifier for scripts and packages. It preserves
-package layout by default, can emit a single-file bundle when asked, and can
-shrink Python packages by roughly `2x` to `4x` on the validated benchmarks
-below when aggressive renaming is enabled.
+`pymini` is an AST-based Python minifier for scripts and packages. It can
+shrink raw Python source code by up to **4x** and the associated `.whl` files
+by up to **7.3x**.
 
 - [Getting Started](#getting-started)
 - [Installation](#installation)
@@ -48,8 +47,9 @@ Representative compression results, using
 | timefhuman | 119,155 | 1.9x | 1.2x | 1.6x |
 | rich | 1,217,001 | 2.6x | failed | 1.6x |
 
-For the full compression tables, speed results, and package validation
-results, see [benchmarks/README.md](./benchmarks/README.md).
+For the above results, we validate that all package tests still run and pass,
+with the minified source code. For the full compression tables, speed results,
+and package validation, see [benchmarks/README.md](./benchmarks/README.md).
 
 # Installation
 
