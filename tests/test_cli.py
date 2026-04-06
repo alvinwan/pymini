@@ -73,10 +73,11 @@ def assert_public_api_is_preserved(module_source: str, consumer_source: str) -> 
     assert isinstance(importer, ast.ImportFrom)
     assert importer.module == "main"
     assert [name.name for name in importer.names] == ["PI", function.name]
+    assert [name.asname for name in importer.names] == [None, "square"]
 
     call = printer.value
     assert call.args[0].id == "PI"
-    assert call.args[1].func.id == function.name
+    assert call.args[1].func.id == "square"
 
 
 def test_cli_accepts_directories(tmp_path):
@@ -173,6 +174,89 @@ def test_cli_preserves_nested_package_paths(tmp_path):
     assert result.returncode == 0, result.stderr
     assert (output_dir / "pkg" / "__init__.py").read_text(encoding="utf-8") == "ROOT=1"
     assert (output_dir / "pkg" / "sub" / "__init__.py").read_text(encoding="utf-8") == "CHILD=2"
+
+
+def test_cli_keeps_package_initializers_when_renaming_modules(tmp_path):
+    source_dir = tmp_path / "src" / "pkg"
+    output_dir = tmp_path / "out" / "pkg"
+    source_dir.mkdir(parents=True)
+
+    write_py(
+        source_dir / "__init__.py",
+        """
+        from pkg.helpers import greet
+        """,
+    )
+    write_py(
+        source_dir / "helpers.py",
+        """
+        def greet():
+            return "hello"
+        """,
+    )
+
+    result = run_cli(
+        "package",
+        str(source_dir),
+        "--rename-modules",
+        "-o",
+        str(output_dir),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (output_dir / "__init__.py").exists()
+    assert not (output_dir / "helpers.py").exists()
+
+    execution = run_python(
+        "import pkg; print(pkg.greet())",
+        pythonpath=output_dir.parent,
+        cwd=tmp_path,
+    )
+    assert execution.returncode == 0, execution.stderr
+    assert execution.stdout == "hello\n"
+
+
+def test_cli_rewrites_relative_package_submodule_imports_when_renaming_modules(tmp_path):
+    source_dir = tmp_path / "src" / "pkg"
+    output_dir = tmp_path / "out" / "pkg"
+    source_dir.mkdir(parents=True)
+
+    write_py(
+        source_dir / "__init__.py",
+        """
+        from . import helpers
+
+        def greet():
+            return helpers.greet()
+        """,
+    )
+    write_py(
+        source_dir / "helpers.py",
+        """
+        def greet():
+            return "hello"
+        """,
+    )
+
+    result = run_cli(
+        "package",
+        str(source_dir),
+        "--rename-modules",
+        "-o",
+        str(output_dir),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (output_dir / "__init__.py").exists()
+    assert not (output_dir / "helpers.py").exists()
+
+    execution = run_python(
+        "import pkg; print(pkg.greet())",
+        pythonpath=output_dir.parent,
+        cwd=tmp_path,
+    )
+    assert execution.returncode == 0, execution.stderr
+    assert execution.stdout == "hello\n"
 
 
 def test_cli_errors_when_no_python_files_match(tmp_path):

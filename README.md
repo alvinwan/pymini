@@ -2,8 +2,8 @@
 
 `pymini` is an AST-based Python minifier for scripts and packages. It preserves
 package layout by default, can emit a single-file bundle when asked, and can
-shrink Python code by roughly `50%` to `75%` on the checked-in fixtures and
-validated package benchmarks when aggressive renaming is enabled.
+shrink Python packages by roughly `2x` to `4x` on the validated benchmarks
+below when aggressive renaming is enabled.
 
 - [Getting Started](#getting-started)
 - [Installation](#installation)
@@ -39,18 +39,17 @@ sources, modules = minify(
 
 # Compression
 
-Current checked-in fixtures, using
+Representative compression results, using
 `--rename-modules --rename-global-variables --rename-arguments`:
 
-| Input | Original | Minified | Reduction |
-| --- | ---: | ---: | ---: |
-| `tests/examples/pyminifier.py` | `1,355` bytes | `438` bytes | `67.7%` |
-| `tests/examples/pyminify.py` | `1,990` bytes | `935` bytes | `53.0%` |
-| `TexSoup/` raw Python source (`*.py`) | `98,181` bytes | `24,288` bytes | `75.3%` |
-| `TexSoup/` compressed source (`.tar.gz`) | `23,101` bytes | `8,363` bytes | `63.8%` |
+| Input | Original bytes | pymini | pyminifier | python-minifier |
+| --- | ---: | ---: | ---: | ---: |
+| TexSoup | 98,181 | 4.0x | 2.8x | 1.2x |
+| timefhuman | 119,155 | 1.9x | 1.2x | 1.6x |
+| rich | 1,217,001 | 2.6x | failed | 1.6x |
 
-For baseline comparisons, speed results, and TexSoup validation details, see
-[benchmarks/README.md](./benchmarks/README.md).
+For the full compression tables, speed results, and package validation
+results, see [benchmarks/README.md](./benchmarks/README.md).
 
 # Installation
 
