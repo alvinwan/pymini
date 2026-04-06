@@ -819,6 +819,7 @@ class VariableShortener(NodeTransformer):
         'class Demiurgic:\\n    pass\\nholy = Demiurgic()'
         """
         old_name = node.name
+        parent_class_context = self._current_class_context()
         rename_public_class = False
         if self.keep_global_variables and self._is_node_global(node):
             if (
@@ -851,6 +852,17 @@ class VariableShortener(NodeTransformer):
             if class_context["argument_infos"]:
                 self.class_method_argument_infos[old_name] = dict(class_context["argument_infos"])
                 self.class_method_argument_infos[node.name] = dict(class_context["argument_infos"])
+                constructor_info = class_context["argument_infos"].get("__init__")
+                if constructor_info is not None:
+                    copied = {
+                        "rename_map": dict(constructor_info["rename_map"]),
+                        "positional_params": list(constructor_info["positional_params"]),
+                    }
+                    self.callable_argument_infos[old_name] = copied
+                    self.callable_argument_infos[node.name] = {
+                        "rename_map": dict(copied["rename_map"]),
+                        "positional_params": list(copied["positional_params"]),
+                    }
             if class_context["aliases"]:
                 node.body.extend(class_context["aliases"])
             if rename_public_class:
@@ -863,6 +875,12 @@ class VariableShortener(NodeTransformer):
             return node
         if node.name not in self.mapping_values:
             node.name = self._rename_identifier(node.name)
+        if parent_class_context is not None and old_name != node.name:
+            parent_class_context["member_mapping"][old_name] = node.name
+            if self.keep_global_variables:
+                parent_class_context["aliases"].append(
+                    self._generated_assignment(f"{old_name} = {node.name}")
+                )
         class_context = {
             "old_name": old_name,
             "new_name": node.name,
@@ -886,6 +904,17 @@ class VariableShortener(NodeTransformer):
         if class_context["argument_infos"]:
             self.class_method_argument_infos[old_name] = dict(class_context["argument_infos"])
             self.class_method_argument_infos[node.name] = dict(class_context["argument_infos"])
+            constructor_info = class_context["argument_infos"].get("__init__")
+            if constructor_info is not None:
+                copied = {
+                    "rename_map": dict(constructor_info["rename_map"]),
+                    "positional_params": list(constructor_info["positional_params"]),
+                }
+                self.callable_argument_infos[old_name] = copied
+                self.callable_argument_infos[node.name] = {
+                    "rename_map": dict(copied["rename_map"]),
+                    "positional_params": list(copied["positional_params"]),
+                }
         return node
 
     def visit_FunctionDef(self, node):
@@ -916,6 +945,12 @@ class VariableShortener(NodeTransformer):
                 class_context = self._current_class_context()
                 if class_context is not None:
                     class_context["receiver_names"].update(argument_info["receiver_names"])
+                    if argument_info["rename_map"] or argument_info["positional_params"]:
+                        copied = {
+                            "rename_map": dict(argument_info["rename_map"]),
+                            "positional_params": list(argument_info["positional_params"]),
+                        }
+                        class_context["argument_infos"][old_name] = copied
                 return self.generic_visit(node)
             finally:
                 self._pop_instance_scope()
@@ -1005,7 +1040,7 @@ class VariableShortener(NodeTransformer):
         """
         if getattr(node, "_pymini_generated", False):
             return node
-        if self.keep_global_variables and self._is_class_body_assignment(node):
+        if self._is_class_body_assignment(node):
             class_context = self._current_class_context()
             for target in node.targets:
                 binding_names = self._binding_names_from_target(target)
@@ -1028,9 +1063,10 @@ class VariableShortener(NodeTransformer):
                             new_name = self._rename_identifier(name)
                             if class_context is not None and name != new_name:
                                 class_context["member_mapping"][name] = new_name
-                                class_context["aliases"].append(
-                                    self._generated_assignment(f"{name} = {new_name}")
-                                )
+                                if self.keep_global_variables:
+                                    class_context["aliases"].append(
+                                        self._generated_assignment(f"{name} = {new_name}")
+                                    )
                     self._rename_assignment_target(target, create_new=False)
                 else:
                     self.visit(target)
@@ -1283,7 +1319,23 @@ class FusedVariableShortener(Transformer):
         packages = package_modules(original_modules)
         module_to_module = {}
         if not self.keep_module_names:
-            module_to_module = {module: next(self.generator) for module in original_modules}
+            preserved_package_modules = {
+                module
+                for module in original_modules
+                if module == "__init__" or module in packages
+            }
+            def renamed_module_name(module):
+                if module in preserved_package_modules:
+                    return module
+                package_name = module_package_name(module, packages)
+                short_name = next(self.generator)
+                if package_name:
+                    return f"{package_name}.{short_name}"
+                return short_name
+            module_to_module = {
+                module: renamed_module_name(module)
+                for module in original_modules
+            }
 
             # NOTE: Must modify in-place, as this list is passed to Fuser
             for i, module in enumerate(original_modules):
@@ -1739,27 +1791,83 @@ class ImportedVariableShortener(VariableShortener):
         """Apply shortener for imported module."""
         module_name = resolve_import_from(self.current_module, node, self.packages)
         shortener = self.module_to_shortener.get(module_name, None)
-        if shortener is not None:
-            for alias in node.names:
-                if alias.name == "*":
-                    continue
-                imported_name = alias.asname or alias.name
-                if alias.name in shortener.callable_argument_infos:
-                    argument_info = shortener.callable_argument_infos[alias.name]
-                    self.callable_argument_infos[imported_name] = {
-                        "rename_map": dict(argument_info["rename_map"]),
-                        "positional_params": list(argument_info["positional_params"]),
+        package_import_module = module_name if module_name in self.packages else None
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            original_name = alias.name
+            imported_module_name = (
+                f"{package_import_module}.{original_name}"
+                if package_import_module
+                else None
+            )
+            if imported_module_name in self.module_to_module:
+                alias.name = self.module_to_module[imported_module_name].rsplit(".", 1)[-1]
+                if alias.asname is None and alias.name != original_name:
+                    alias.asname = original_name
+            if shortener is None:
+                continue
+            imported_name = alias.asname or original_name
+            class_member_info = shortener.class_member_mappings.get(original_name)
+            class_method_info = shortener.class_method_argument_infos.get(original_name)
+            if original_name in shortener.callable_argument_infos:
+                argument_info = shortener.callable_argument_infos[original_name]
+                self.callable_argument_infos[imported_name] = {
+                    "rename_map": dict(argument_info["rename_map"]),
+                    "positional_params": list(argument_info["positional_params"]),
+                }
+            if original_name in shortener.mapping:
+                renamed_name = shortener.mapping[original_name]
+                preserve_binding_name = (
+                    self.keep_global_variables
+                    and self._is_node_global(node)
+                    and imported_name != renamed_name
+                )
+                alias.name = renamed_name
+                if preserve_binding_name:
+                    alias.asname = imported_name
+                    self.mapping[imported_name] = imported_name
+                else:
+                    self.mapping[original_name] = renamed_name
+                if imported_name != alias.name and imported_name in self.callable_argument_infos:
+                    copied = self.callable_argument_infos[imported_name]
+                    self.callable_argument_infos[alias.name] = {
+                        "rename_map": dict(copied["rename_map"]),
+                        "positional_params": list(copied["positional_params"]),
                     }
-                if alias.name in shortener.mapping:
-                    self.mapping[alias.name] = alias.name = shortener.mapping[alias.name]
-                    if imported_name != alias.name and imported_name in self.callable_argument_infos:
-                        copied = self.callable_argument_infos[imported_name]
-                        self.callable_argument_infos[alias.name] = {
-                            "rename_map": dict(copied["rename_map"]),
-                            "positional_params": list(copied["positional_params"]),
-                        }
-            if node.level == 0 and module_name in self.module_to_module:
-                node.module = self.module_to_module[module_name]
+            local_binding_name = alias.asname or alias.name
+            if class_member_info is not None:
+                copied_members = dict(class_member_info)
+                self.class_member_mappings[imported_name] = dict(copied_members)
+                self.class_member_mappings[local_binding_name] = dict(copied_members)
+            if class_method_info is not None:
+                copied_methods = {
+                    method_name: {
+                        "rename_map": dict(info["rename_map"]),
+                        "positional_params": list(info["positional_params"]),
+                    }
+                    for method_name, info in class_method_info.items()
+                }
+                self.class_method_argument_infos[imported_name] = {
+                    method_name: {
+                        "rename_map": dict(info["rename_map"]),
+                        "positional_params": list(info["positional_params"]),
+                    }
+                    for method_name, info in copied_methods.items()
+                }
+                self.class_method_argument_infos[local_binding_name] = copied_methods
+        if module_name in self.module_to_module:
+            rewritten_module = self.module_to_module[module_name]
+            if node.level == 0:
+                node.module = rewritten_module
+            else:
+                package_name = module_package_name(self.current_module, self.packages)
+                package_parts = package_name.split(".") if package_name else []
+                base_parts = package_parts[:len(package_parts) - node.level + 1]
+                if base_parts and rewritten_module.startswith(".".join(base_parts) + "."):
+                    node.module = rewritten_module[len(".".join(base_parts)) + 1:]
+                else:
+                    node.module = rewritten_module
         return self.generic_visit(node)
 
 
@@ -2158,7 +2266,7 @@ def minify(sources, modules='main', keep_module_names=False,
     >>> sources[0]
     'b=3\\ndef c(x):return x**2'
     >>> sources[1]
-    'from a import c;c(3)'
+    'from a import c as square;square(3)'
     """
     if isinstance(sources, str):
         sources = [sources]

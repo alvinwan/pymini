@@ -33,10 +33,11 @@ def assert_public_api_is_preserved(module_source: str, consumer_source: str) -> 
     assert isinstance(importer, ast.ImportFrom)
     assert importer.module == "main"
     assert [name.name for name in importer.names] == ["PI", function.name]
+    assert [name.asname for name in importer.names] == [None, "square"]
 
     call = printer.value
     assert call.args[0].id == "PI"
-    assert call.args[1].func.id == function.name
+    assert call.args[1].func.id == "square"
 
 
 def assert_cross_file_imports_are_rewritten(module_source: str, consumer_source: str, modules: list[str]) -> None:
@@ -54,9 +55,10 @@ def assert_cross_file_imports_are_rewritten(module_source: str, consumer_source:
     assert isinstance(importer, ast.ImportFrom)
     assert importer.module == modules[0]
     assert [name.name for name in importer.names] == [function.name]
+    assert [name.asname for name in importer.names] == ["square"]
 
     assert isinstance(call, ast.Expr)
-    assert call.value.func.id == function.name
+    assert call.value.func.id == "square"
 
 
 def assert_bundle_preserves_public_alias(bundle_source: str) -> None:
@@ -1345,6 +1347,51 @@ def test_minify_keeps_import_alias_argument_metadata(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "9\n"
+    assert modules == ["main", "side"]
+
+
+def test_minify_rewrites_imported_class_alias_keywords_and_members(tmp_path):
+    cleaned, modules = minify(
+        [
+            py(
+                """
+                class Time:
+                    def __init__(self, hour=None):
+                        self.hour = hour
+
+                    Meridiem = type("Meridiem", (), {"PM": 1})
+                """
+            ),
+            py(
+                """
+                from main import Time as tfhTime
+
+                print(tfhTime(hour=1).hour, tfhTime.Meridiem.PM)
+                """
+            ),
+        ],
+        ["main", "side"],
+        keep_module_names=True,
+        rename_arguments=True,
+    )
+
+    assert "hour=" not in cleaned[1]
+    assert "Meridiem" not in cleaned[1]
+
+    main_path = tmp_path / "main.py"
+    side_path = tmp_path / "side.py"
+    main_path.write_text(cleaned[0], encoding="utf-8")
+    side_path.write_text(cleaned[1], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(side_path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1 1\n"
     assert modules == ["main", "side"]
 
 

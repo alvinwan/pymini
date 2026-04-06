@@ -93,6 +93,9 @@ def module_name_from_relative_path(path: Path) -> str:
 def load_sources(paths: Iterable[Path], *, module_root: Optional[Path]) -> tuple[list[str], list[str], dict[str, Path]]:
     sources, modules = [], []
     module_to_output_path = {}
+    package_prefix = None
+    if module_root is not None and (module_root / "__init__.py").is_file():
+        package_prefix = module_root.name
     for path in paths:
         sources.append(path.read_text(encoding="utf-8"))
         if module_root is None:
@@ -101,6 +104,12 @@ def load_sources(paths: Iterable[Path], *, module_root: Optional[Path]) -> tuple
         else:
             output_path = path.relative_to(module_root)
             module = module_name_from_relative_path(output_path)
+            if package_prefix is not None:
+                module = (
+                    package_prefix
+                    if module == "__init__"
+                    else f"{package_prefix}.{module}"
+                )
         modules.append(module)
         module_to_output_path[module] = output_path
     return sources, modules, module_to_output_path
@@ -124,6 +133,7 @@ def write_outputs(
     single_file: bool,
     keep_module_names: bool,
     module_to_output_path: dict[str, Path],
+    original_modules: Sequence[str],
 ) -> None:
     if single_file:
         destination = output if output.suffix == ".py" else output / f"{modules[0]}.py"
@@ -135,11 +145,21 @@ def write_outputs(
         raise ValueError("output must be a directory unless --single-file is set")
 
     output.mkdir(parents=True, exist_ok=True)
-    for source, module in zip(sources, modules):
+    for source, module, original_module in zip(sources, modules, original_modules):
+        original_output_path = module_to_output_path.get(original_module)
         destination = (
-            output / module_to_output_path[module]
-            if keep_module_names and module in module_to_output_path
-            else output / f"{module}.py"
+            output / original_output_path
+            if (
+                original_output_path is not None and (
+                    keep_module_names
+                    or original_output_path.name == "__init__.py"
+                )
+            )
+            else (
+                output / original_output_path.parent / f"{module.rsplit('.', 1)[-1]}.py"
+                if original_output_path is not None
+                else output / Path(*module.split(".")).with_suffix(".py")
+            )
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(source, encoding="utf-8")
@@ -158,6 +178,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ensure_unique_modules(modules)
     except ValueError as exc:
         parser.error(str(exc))
+    original_modules = list(modules)
     cleaned, modules = minify(
         sources,
         modules,
@@ -174,6 +195,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             single_file=output_single_file,
             keep_module_names=keep_module_names,
             module_to_output_path=module_to_output_path,
+            original_modules=original_modules,
         )
     except ValueError as exc:
         parser.error(str(exc))
