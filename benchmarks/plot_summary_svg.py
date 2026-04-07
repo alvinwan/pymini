@@ -50,6 +50,29 @@ GRID_COLOR = "#eceef2"
 TEXT_COLOR = "#1c1f24"
 MUTED = "#5d6674"
 FONT = "ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+STYLE = """\
+<style>
+  svg {
+    color-scheme: light dark;
+  }
+
+  .chart-background {
+    fill: #0f172a;
+    fill-opacity: 0.1;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .chart-body {
+      filter: invert(1) hue-rotate(180deg);
+    }
+
+    .chart-background {
+      fill: #f8fafc;
+      fill-opacity: 0.08;
+    }
+  }
+</style>
+"""
 
 
 def svg_text(x, y, text, size=14, weight="400", anchor="start", fill=TEXT_COLOR):
@@ -60,12 +83,13 @@ def svg_text(x, y, text, size=14, weight="400", anchor="start", fill=TEXT_COLOR)
     )
 
 
-def svg_rect(x, y, width, height, fill, rx=8, stroke="none", dash=None, opacity=None):
+def svg_rect(x, y, width, height, fill, rx=8, stroke="none", dash=None, opacity=None, class_name=None):
+    class_attr = f' class="{class_name}"' if class_name else ""
     dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
     opacity_attr = f' opacity="{opacity}"' if opacity is not None else ""
     return (
         f'<rect x="{x}" y="{y}" width="{width}" height="{height}" rx="{rx}" '
-        f'fill="{fill}" stroke="{stroke}"{dash_attr}{opacity_attr} />'
+        f'fill="{fill}" stroke="{stroke}"{class_attr}{dash_attr}{opacity_attr} />'
     )
 
 
@@ -184,7 +208,9 @@ def draw_speed_panel(elements):
 def build_svg():
     elements = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}" fill="none">',
-        svg_rect(0, 0, WIDTH, HEIGHT, "#ffffff", rx=0),
+        STYLE.strip(),
+        svg_rect(0, 0, WIDTH, HEIGHT, "#0f172a", rx=22, class_name="chart-background"),
+        '<g class="chart-body">',
         svg_text(PADDING, TITLE_Y, "pymini Benchmark Snapshot", size=24, weight="700"),
         svg_text(
             PADDING,
@@ -205,6 +231,7 @@ def build_svg():
         PACKAGES,
     )
     draw_speed_panel(elements)
+    elements.append("</g>")
     elements.append("</svg>")
     return "\n".join(elements)
 

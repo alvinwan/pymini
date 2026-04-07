@@ -1,5 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="980" height="430" viewBox="0 0 980 430" fill="none">
-<rect x="0" y="0" width="980" height="430" rx="0" fill="#ffffff" stroke="none" />
+<style>
+  svg {
+    color-scheme: light dark;
+  }
+
+  .chart-background {
+    fill: #0f172a;
+    fill-opacity: 0.1;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .chart-body {
+      filter: invert(1) hue-rotate(180deg);
+    }
+
+    .chart-background {
+      fill: #f8fafc;
+      fill-opacity: 0.08;
+    }
+  }
+</style>
+<rect x="0" y="0" width="980" height="430" rx="22" fill="#0f172a" stroke="none" class="chart-background" />
+<g class="chart-body">
 <text x="36" y="32" fill="#1c1f24" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700" text-anchor="start">pymini Benchmark Snapshot</text>
 <text x="36" y="54" fill="#5d6674" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">Validated package benchmarks from benchmarks/README.md, measured locally on April 7, 2026</text>
 <rect x="36" y="66" width="14" height="14" rx="4" fill="#1f7a5a" stroke="none" />
@@ -80,4 +102,5 @@
 <rect x="884.3333333333333" y="206.9533398374209" width="24" height="113.04666016257909" rx="4" fill="#c06b3e" stroke="none" />
 <text x="896.3333333333333" y="196.9533398374209" fill="#1c1f24" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">1838.7 ms</text>
 <text x="866.3333333333333" y="340" fill="#5d6674" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="400" text-anchor="middle">rich</text>
+</g>
 </svg>
