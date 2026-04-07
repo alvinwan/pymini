@@ -9,6 +9,8 @@ the benchmark harness used to reproduce them.
 
 # Results
 
+![Benchmark summary chart comparing minify-only compression and speed across packages](./competitor_summary.svg)
+
 ## Compression
 
 Compression multipliers below are all relative to the original raw Python
