@@ -9,7 +9,7 @@ the benchmark harness used to reproduce them.
 
 # Results
 
-![Benchmark summary chart comparing minify-only compression and speed across packages](./competitor_summary.svg)
+![Benchmark summary chart comparing minify-only compression and speed across packages](./summary.svg)
 
 ## Compression
 

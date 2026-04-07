@@ -2,43 +2,37 @@
 <style>
   svg {
     color-scheme: light dark;
-    --bg: rgba(15, 23, 42, 0.10);
-    --panel: rgba(250, 251, 252, 0.92);
+    --bg: #ffffff;
+    --panel: #fafbfc;
     --panel-stroke: #e4e7ec;
     --grid: #eceef2;
     --axis: #d5d8df;
     --text: #1c1f24;
     --muted: #5d6674;
-    --fail-fill: rgba(255, 255, 255, 0.9);
-    --fail-stroke: #c7cdd8;
-    --fail-text: #b42318;
   }
 
   @media (prefers-color-scheme: dark) {
     svg {
-      --bg: rgba(248, 250, 252, 0.08);
-      --panel: rgba(21, 26, 35, 0.88);
+      --bg: #0e1117;
+      --panel: #151a23;
       --panel-stroke: #2f3847;
       --grid: #2a3140;
       --axis: #3a4456;
       --text: #f3f5f8;
       --muted: #b7bfcb;
-      --fail-fill: rgba(255, 255, 255, 0.06);
-      --fail-stroke: #8f9bad;
-      --fail-text: #f6c3be;
     }
   }
 </style>
-<rect x="0" y="0" width="980" height="430" rx="22" fill="var(--bg)" stroke="none" />
+<rect x="0" y="0" width="980" height="430" rx="0" fill="var(--bg)" stroke="none" stroke-width="1" />
 <text x="36" y="32" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="700" text-anchor="start">pymini Benchmark Snapshot</text>
 <text x="36" y="54" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="400" text-anchor="start">Validated package benchmarks from benchmarks/README.md, measured locally on April 7, 2026</text>
-<rect x="36" y="66" width="14" height="14" rx="4" fill="#1f7a5a" stroke="none" />
+<rect x="36" y="66" width="14" height="14" rx="4" fill="#1f7a5a" stroke="none" stroke-width="1" />
 <text x="58" y="78" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">pymini</text>
-<rect x="184" y="66" width="14" height="14" rx="4" fill="#6e7c91" stroke="none" />
+<rect x="184" y="66" width="14" height="14" rx="4" fill="#6e7c91" stroke="none" stroke-width="1" />
 <text x="206" y="78" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">pyminifier</text>
-<rect x="332" y="66" width="14" height="14" rx="4" fill="#c06b3e" stroke="none" />
+<rect x="332" y="66" width="14" height="14" rx="4" fill="#c06b3e" stroke="none" stroke-width="1" />
 <text x="354" y="78" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">python-minifier</text>
-<rect x="36.0" y="102" width="440.0" height="270" rx="14" fill="var(--panel)" stroke="var(--panel-stroke)" />
+<rect x="36.0" y="102" width="440.0" height="270" rx="14" fill="var(--panel)" stroke="var(--panel-stroke)" stroke-width="1" />
 <text x="54.0" y="130" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="600" text-anchor="start">Compression</text>
 <text x="54.0" y="150" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">Minify-only compression multiplier by package; higher is better</text>
 <line x1="90.0" y1="320.0" x2="460.0" y2="320.0" stroke="var(--grid)" />
@@ -53,28 +47,28 @@
 <text x="80.0" y="188.0" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="400" text-anchor="end">4x</text>
 <line x1="90.0" y1="184" x2="90.0" y2="320" stroke="var(--axis)" />
 <line x1="90.0" y1="320" x2="460.0" y2="320" stroke="var(--axis)" />
-<rect x="109.66666666666666" y="184.0" width="24" height="136.0" rx="4" fill="#1f7a5a" stroke="none" />
+<rect x="109.66666666666666" y="184.0" width="24" height="136.0" rx="4" fill="#1f7a5a" stroke="none" stroke-width="1" />
 <text x="121.66666666666666" y="174.0" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">4.0x</text>
-<rect x="139.66666666666666" y="224.8" width="24" height="95.19999999999999" rx="4" fill="#6e7c91" stroke="none" />
+<rect x="139.66666666666666" y="224.8" width="24" height="95.19999999999999" rx="4" fill="#6e7c91" stroke="none" stroke-width="1" />
 <text x="151.66666666666666" y="214.8" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">2.8x</text>
-<rect x="169.66666666666666" y="279.2" width="24" height="40.8" rx="4" fill="#c06b3e" stroke="none" />
+<rect x="169.66666666666666" y="279.2" width="24" height="40.8" rx="4" fill="#c06b3e" stroke="none" stroke-width="1" />
 <text x="181.66666666666666" y="269.2" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">1.2x</text>
 <text x="151.66666666666666" y="340" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="400" text-anchor="middle">TexSoup</text>
-<rect x="232.99999999999997" y="255.4" width="24" height="64.6" rx="4" fill="#1f7a5a" stroke="none" />
+<rect x="232.99999999999997" y="255.4" width="24" height="64.6" rx="4" fill="#1f7a5a" stroke="none" stroke-width="1" />
 <text x="244.99999999999997" y="245.4" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">1.9x</text>
-<rect x="263.0" y="279.2" width="24" height="40.8" rx="4" fill="#6e7c91" stroke="none" />
+<rect x="263.0" y="279.2" width="24" height="40.8" rx="4" fill="#6e7c91" stroke="none" stroke-width="1" />
 <text x="275.0" y="269.2" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">1.2x</text>
-<rect x="293.0" y="265.6" width="24" height="54.400000000000006" rx="4" fill="#c06b3e" stroke="none" />
+<rect x="293.0" y="265.6" width="24" height="54.400000000000006" rx="4" fill="#c06b3e" stroke="none" stroke-width="1" />
 <text x="305.0" y="255.60000000000002" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">1.6x</text>
 <text x="275.0" y="340" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="400" text-anchor="middle">timefhuman</text>
-<rect x="356.3333333333333" y="231.6" width="24" height="88.4" rx="4" fill="#1f7a5a" stroke="none" />
+<rect x="356.3333333333333" y="231.6" width="24" height="88.4" rx="4" fill="#1f7a5a" stroke="none" stroke-width="1" />
 <text x="368.3333333333333" y="221.6" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">2.6x</text>
-<rect x="386.3333333333333" y="296" width="24" height="24" rx="5" fill="var(--fail-fill)" stroke="var(--fail-stroke)" stroke-dasharray="4 4" />
-<text x="398.3333333333333" y="286" fill="var(--fail-text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">fail</text>
-<rect x="416.3333333333333" y="265.6" width="24" height="54.400000000000006" rx="4" fill="#c06b3e" stroke="none" />
+<rect x="386.3333333333333" y="296" width="24" height="24" rx="5" fill="none" stroke="#6e7c91" stroke-width="1.5" stroke-dasharray="6 4" />
+<text x="398.3333333333333" y="286" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">fail</text>
+<rect x="416.3333333333333" y="265.6" width="24" height="54.400000000000006" rx="4" fill="#c06b3e" stroke="none" stroke-width="1" />
 <text x="428.3333333333333" y="255.60000000000002" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">1.6x</text>
 <text x="398.3333333333333" y="340" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="400" text-anchor="middle">rich</text>
-<rect x="504.0" y="102" width="440.0" height="270" rx="14" fill="var(--panel)" stroke="var(--panel-stroke)" />
+<rect x="504.0" y="102" width="440.0" height="270" rx="14" fill="var(--panel)" stroke="var(--panel-stroke)" stroke-width="1" />
 <text x="522.0" y="130" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="600" text-anchor="start">Speed</text>
 <text x="522.0" y="150" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="400" text-anchor="start">Mean package minification time; lower is better (log scale)</text>
 <line x1="558.0" y1="313.4101191154522" x2="928.0" y2="313.4101191154522" stroke="var(--grid)" />
@@ -89,25 +83,25 @@
 <text x="548.0" y="196.4958340893644" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="400" text-anchor="end">3000 ms</text>
 <line x1="558.0" y1="184" x2="558.0" y2="320" stroke="var(--axis)" />
 <line x1="558.0" y1="320" x2="928.0" y2="320" stroke="var(--axis)" />
-<rect x="577.6666666666666" y="286.3738336008602" width="24" height="33.62616639913979" rx="4" fill="#1f7a5a" stroke="none" />
+<rect x="577.6666666666666" y="286.3738336008602" width="24" height="33.62616639913979" rx="4" fill="#1f7a5a" stroke="none" stroke-width="1" />
 <text x="589.6666666666666" y="276.3738336008602" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">124.9 ms</text>
-<rect x="607.6666666666666" y="312.1384852061476" width="24" height="7.861514793852387" rx="4" fill="#6e7c91" stroke="none" />
+<rect x="607.6666666666666" y="312.1384852061476" width="24" height="7.861514793852387" rx="4" fill="#6e7c91" stroke="none" stroke-width="1" />
 <text x="619.6666666666666" y="302.1384852061476" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">52.2 ms</text>
-<rect x="637.6666666666666" y="288.2530018159205" width="24" height="31.746998184079466" rx="4" fill="#c06b3e" stroke="none" />
+<rect x="637.6666666666666" y="288.2530018159205" width="24" height="31.746998184079466" rx="4" fill="#c06b3e" stroke="none" stroke-width="1" />
 <text x="649.6666666666666" y="278.2530018159205" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">117.2 ms</text>
 <text x="619.6666666666666" y="340" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="400" text-anchor="middle">TexSoup</text>
-<rect x="701.0" y="255.7751782937885" width="24" height="64.22482170621149" rx="4" fill="#1f7a5a" stroke="none" />
+<rect x="701.0" y="255.7751782937885" width="24" height="64.22482170621149" rx="4" fill="#1f7a5a" stroke="none" stroke-width="1" />
 <text x="713.0" y="245.7751782937885" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">352.0 ms</text>
-<rect x="731.0" y="303.05451169740434" width="24" height="16.94548830259568" rx="4" fill="#6e7c91" stroke="none" />
+<rect x="731.0" y="303.05451169740434" width="24" height="16.94548830259568" rx="4" fill="#6e7c91" stroke="none" stroke-width="1" />
 <text x="743.0" y="293.05451169740434" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">71.0 ms</text>
-<rect x="761.0" y="264.0481281193889" width="24" height="55.95187188061112" rx="4" fill="#c06b3e" stroke="none" />
+<rect x="761.0" y="264.0481281193889" width="24" height="55.95187188061112" rx="4" fill="#c06b3e" stroke="none" stroke-width="1" />
 <text x="773.0" y="254.04812811938888" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">266.0 ms</text>
 <text x="743.0" y="340" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="400" text-anchor="middle">timefhuman</text>
-<rect x="824.3333333333333" y="189.8012935481831" width="24" height="130.1987064518169" rx="4" fill="#1f7a5a" stroke="none" />
+<rect x="824.3333333333333" y="189.8012935481831" width="24" height="130.1987064518169" rx="4" fill="#1f7a5a" stroke="none" stroke-width="1" />
 <text x="836.3333333333333" y="179.8012935481831" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">3286.6 ms</text>
-<rect x="854.3333333333333" y="296" width="24" height="24" rx="5" fill="var(--fail-fill)" stroke="var(--fail-stroke)" stroke-dasharray="4 4" />
-<text x="866.3333333333333" y="286" fill="var(--fail-text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">fail</text>
-<rect x="884.3333333333333" y="206.9533398374209" width="24" height="113.04666016257909" rx="4" fill="#c06b3e" stroke="none" />
+<rect x="854.3333333333333" y="296" width="24" height="24" rx="5" fill="none" stroke="#6e7c91" stroke-width="1.5" stroke-dasharray="6 4" />
+<text x="866.3333333333333" y="286" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">fail</text>
+<rect x="884.3333333333333" y="206.9533398374209" width="24" height="113.04666016257909" rx="4" fill="#c06b3e" stroke="none" stroke-width="1" />
 <text x="896.3333333333333" y="196.9533398374209" fill="var(--text)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="10" font-weight="600" text-anchor="middle">1838.7 ms</text>
 <text x="866.3333333333333" y="340" fill="var(--muted)" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="400" text-anchor="middle">rich</text>
 </svg>
