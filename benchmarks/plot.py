@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import math
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -25,18 +24,18 @@ TOOLS = (
 PACKAGES = (
     {
         "name": "TexSoup",
-        "speed_ms": {"pymini": 124.9, "pyminifier": 52.2, "python-minifier": 117.2},
-        "compression_x": {"pymini": 4.0, "pyminifier": 2.8, "python-minifier": 1.2},
+        "minify_x": {"pymini": 4.0, "pyminifier": 2.8, "python-minifier": 1.2},
+        "wheel_x": {"pymini": 7.3, "pyminifier": 6.6, "python-minifier": 3.6},
     },
     {
         "name": "timefhuman",
-        "speed_ms": {"pymini": 352.0, "pyminifier": 71.0, "python-minifier": 266.0},
-        "compression_x": {"pymini": 1.9, "pyminifier": 1.2, "python-minifier": 1.6},
+        "minify_x": {"pymini": 1.9, "pyminifier": 1.2, "python-minifier": 1.6},
+        "wheel_x": {"pymini": 3.4, "pyminifier": 3.1, "python-minifier": 3.2},
     },
     {
         "name": "rich",
-        "speed_ms": {"pymini": 3286.6, "pyminifier": None, "python-minifier": 1838.7},
-        "compression_x": {"pymini": 2.6, "pyminifier": None, "python-minifier": 1.6},
+        "minify_x": {"pymini": 2.6, "pyminifier": None, "python-minifier": 1.6},
+        "wheel_x": {"pymini": 6.6, "pyminifier": None, "python-minifier": 4.6},
     },
 )
 
@@ -149,7 +148,7 @@ def group_start_x(axis_left, group_width, group_index, cluster_width):
     return axis_left + group_width * group_index + (group_width - cluster_width) / 2
 
 
-def draw_compression_panel(elements, x, y, width, height, title, subtitle, packages, max_value=4.0):
+def draw_multiplier_panel(elements, x, y, width, height, title, subtitle, packages, key, max_value, tick_values):
     draw_panel_frame(elements, x, y, width, height, title, subtitle)
     axis_left = x + 54
     axis_right = x + width - 16
@@ -157,7 +156,7 @@ def draw_compression_panel(elements, x, y, width, height, title, subtitle, packa
     axis_bottom = y + height - 52
     axis_height = axis_bottom - axis_top
 
-    for tick in (0, 1, 2, 3, 4):
+    for tick in tick_values:
         tick_y = axis_bottom - axis_height * (tick / max_value)
         elements.append(f'<line x1="{axis_left}" y1="{tick_y}" x2="{axis_right}" y2="{tick_y}" stroke="{GRID}" />')
         elements.append(svg_text(axis_left - 10, tick_y + 4, f"{tick}x", size=11, anchor='end', fill=MUTED))
@@ -171,7 +170,7 @@ def draw_compression_panel(elements, x, y, width, height, title, subtitle, packa
         center = group_center(axis_left, group_width, group_index)
         start_x = group_start_x(axis_left, group_width, group_index, cluster_width)
         for tool_index, tool in enumerate(TOOLS):
-            value = package["compression_x"][tool["name"]]
+            value = package[key][tool["name"]]
             bar_x = start_x + tool_index * (BAR_WIDTH + BAR_GAP)
             if value is None:
                 fail_height = 24
@@ -186,47 +185,21 @@ def draw_compression_panel(elements, x, y, width, height, title, subtitle, packa
         elements.append(svg_text(center, axis_bottom + 20, package["name"], size=11, anchor='middle', fill=MUTED))
 
 
-def draw_speed_panel(elements):
+def draw_wheel_panel(elements):
     x, y = panel_origin(1)
-    draw_panel_frame(elements, x, y, PANEL_WIDTH, PANEL_HEIGHT, 'Speed', 'Mean package minification time; lower is better (log scale)')
-    axis_left = x + 54
-    axis_right = x + PANEL_WIDTH - 16
-    axis_top = y + 82
-    axis_bottom = y + PANEL_HEIGHT - 52
-    axis_height = axis_bottom - axis_top
-    log_min = math.log10(40)
-    log_max = math.log10(4000)
-    ticks = (50, 100, 500, 1000, 3000)
-
-    for tick in ticks:
-        fraction = (math.log10(tick) - log_min) / (log_max - log_min)
-        tick_y = axis_bottom - axis_height * fraction
-        elements.append(f'<line x1="{axis_left}" y1="{tick_y}" x2="{axis_right}" y2="{tick_y}" stroke="{GRID}" />')
-        elements.append(svg_text(axis_left - 10, tick_y + 4, f"{tick:g} ms", size=11, anchor='end', fill=MUTED))
-
-    elements.append(f'<line x1="{axis_left}" y1="{axis_top}" x2="{axis_left}" y2="{axis_bottom}" stroke="{AXIS}" />')
-    elements.append(f'<line x1="{axis_left}" y1="{axis_bottom}" x2="{axis_right}" y2="{axis_bottom}" stroke="{AXIS}" />')
-
-    group_width, cluster_width = layout_groups(axis_left, axis_right, len(PACKAGES))
-
-    for group_index, package in enumerate(PACKAGES):
-        center = group_center(axis_left, group_width, group_index)
-        start_x = group_start_x(axis_left, group_width, group_index, cluster_width)
-        for tool_index, tool in enumerate(TOOLS):
-            value = package["speed_ms"][tool["name"]]
-            bar_x = start_x + tool_index * (BAR_WIDTH + BAR_GAP)
-            if value is None:
-                fail_height = 24
-                fail_y = axis_bottom - fail_height
-                elements.append(svg_rect(bar_x, fail_y, BAR_WIDTH, fail_height, 'none', rx=5, stroke=tool["color"], stroke_width=1.5, dash='6 4'))
-                elements.append(svg_text(bar_x + BAR_WIDTH / 2, fail_y - 10, 'fail', size=10, weight='600', anchor='middle', fill=MUTED))
-                continue
-            fraction = (math.log10(value) - log_min) / (log_max - log_min)
-            bar_height = max(axis_height * fraction, 4)
-            bar_y = axis_bottom - bar_height
-            elements.append(svg_rect(bar_x, bar_y, BAR_WIDTH, bar_height, tool["color"], rx=4))
-            elements.append(svg_text(bar_x + BAR_WIDTH / 2, bar_y - 10, f"{value:.1f} ms", size=10, weight='600', anchor='middle'))
-        elements.append(svg_text(center, axis_bottom + 20, package["name"], size=11, anchor='middle', fill=MUTED))
+    draw_multiplier_panel(
+        elements,
+        x,
+        y,
+        PANEL_WIDTH,
+        PANEL_HEIGHT,
+        'Compression',
+        'Minify + wheel compression multiplier by package; higher is better',
+        PACKAGES,
+        'wheel_x',
+        8.0,
+        (0, 2, 4, 6, 8),
+    )
 
 
 def build_svg():
@@ -244,16 +217,19 @@ def build_svg():
         ),
     ]
     draw_legend(elements)
-    draw_compression_panel(
+    draw_multiplier_panel(
         elements,
         *panel_origin(0),
         PANEL_WIDTH,
         PANEL_HEIGHT,
-        'Compression',
+        'Minification',
         'Minify-only compression multiplier by package; higher is better',
         PACKAGES,
+        'minify_x',
+        4.0,
+        (0, 1, 2, 3, 4),
     )
-    draw_speed_panel(elements)
+    draw_wheel_panel(elements)
     elements.append('</svg>')
     return "\n".join(elements)
 
