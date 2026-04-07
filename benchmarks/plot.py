@@ -40,17 +40,15 @@ PACKAGES = (
 )
 
 WIDTH = 980
-HEIGHT = 430
-PADDING = 36
-TITLE_Y = 32
-SUBTITLE_Y = 54
-LEGEND_Y = 77
-PANEL_GAP = 28
-PANEL_TOP = 102
-PANEL_HEIGHT = 270
+HEIGHT = 344
+PADDING = 22
+LEGEND_Y = 22
+PANEL_GAP = 20
+PANEL_TOP = 40
+PANEL_HEIGHT = 282
 PANEL_WIDTH = (WIDTH - PADDING * 2 - PANEL_GAP) / 2
-BAR_GAP = 6
-BAR_WIDTH = 24
+BAR_GAP = 8
+BAR_WIDTH = 26
 BG = 'var(--bg)'
 PANEL = 'var(--panel)'
 PANEL_STROKE = 'var(--panel-stroke)'
@@ -122,8 +120,8 @@ def panel_origin(index):
 
 def draw_panel_frame(elements, x, y, width, height, title, subtitle):
     elements.append(svg_rect(x, y, width, height, PANEL, rx=14, stroke=PANEL_STROKE))
-    elements.append(svg_text(x + 18, y + 28, title, size=16, weight='600'))
-    elements.append(svg_text(x + 18, y + 48, subtitle, size=12, fill=MUTED))
+    elements.append(svg_text(x + 16, y + 26, title, size=16, weight='600'))
+    elements.append(svg_text(x + 16, y + 44, subtitle, size=12, fill=MUTED))
 
 
 def draw_legend(elements):
@@ -150,10 +148,10 @@ def group_start_x(axis_left, group_width, group_index, cluster_width):
 
 def draw_multiplier_panel(elements, x, y, width, height, title, subtitle, packages, key, max_value, tick_values):
     draw_panel_frame(elements, x, y, width, height, title, subtitle)
-    axis_left = x + 54
-    axis_right = x + width - 16
-    axis_top = y + 82
-    axis_bottom = y + height - 52
+    axis_left = x + 46
+    axis_right = x + width - 12
+    axis_top = y + 72
+    axis_bottom = y + height - 36
     axis_height = axis_bottom - axis_top
 
     for tick in tick_values:
@@ -207,14 +205,6 @@ def build_svg():
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}" fill="none">',
         style_block(),
         svg_rect(0, 0, WIDTH, HEIGHT, BG, rx=0),
-        svg_text(PADDING, TITLE_Y, 'pymini Benchmark Snapshot', size=24, weight='700'),
-        svg_text(
-            PADDING,
-            SUBTITLE_Y,
-            'Validated package benchmarks from benchmarks/README.md, measured locally on April 7, 2026',
-            size=13,
-            fill=MUTED,
-        ),
     ]
     draw_legend(elements)
     draw_multiplier_panel(
