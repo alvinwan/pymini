@@ -5,6 +5,8 @@ import subprocess
 import sys
 from textwrap import dedent
 
+import pytest
+
 from pymini import minify
 from pymini.utils import variable_name_generator
 
@@ -1674,6 +1676,10 @@ def test_minify_preserves_placeholder_bodies_after_docstring_removal(tmp_path):
     assert modules == ["main"]
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 10),
+    reason="pattern matching requires Python 3.10+",
+)
 def test_minify_preserves_match_case_spacing(tmp_path):
     cleaned, modules = minify(
         py(
