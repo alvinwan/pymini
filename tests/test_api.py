@@ -5,6 +5,8 @@ import subprocess
 import sys
 from textwrap import dedent
 
+import pytest
+
 from pymini import minify
 from pymini.utils import variable_name_generator
 
@@ -1456,3 +1458,258 @@ def test_minify_bundle_runs_entry_module_as_main(tmp_path):
     assert result.returncode == 0, result.stderr
     assert result.stdout == "ran\n"
     assert modules == ["bundle"]
+
+
+def test_minify_keeps_nonlocal_bindings_in_sync_with_local_renames(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def outer():
+                hash_value = 1
+
+                def inner():
+                    nonlocal hash_value
+                    return hash_value
+
+                return inner()
+
+            print(outer())
+            """
+        ),
+        "main",
+        keep_global_variables=False,
+        keep_module_names=True,
+        rename_arguments=True,
+    )
+
+    tree = ast.parse(cleaned[0])
+    outer = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    binding = next(
+        node.targets[0].id
+        for node in outer.body
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+    )
+    inner = next(node for node in outer.body if isinstance(node, ast.FunctionDef))
+    nonlocal_stmt = next(node for node in inner.body if isinstance(node, ast.Nonlocal))
+
+    assert nonlocal_stmt.names == [binding]
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n"
+    assert modules == ["main"]
+
+
+def test_minify_keeps_future_imports_before_hoisted_helpers(tmp_path):
+    cleaned, modules = minify(
+        py(
+            '''
+            """module docs"""
+            from __future__ import annotations
+
+            left = "PhysicalResourceId"
+            right = "PhysicalResourceId"
+
+            print(left, right)
+            '''
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    tree = ast.parse(cleaned[0])
+    assert isinstance(tree.body[0], ast.ImportFrom)
+    assert tree.body[0].module == "__future__"
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "PhysicalResourceId PhysicalResourceId\n"
+    assert modules == ["main"]
+
+
+def test_minify_preserves_fstring_braces_during_whitespace_removal(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def build(widths):
+                return "  ".join((f"{{{x}:<{w}}}" for x, w in enumerate(widths)))
+
+            print(build([1, 2]))
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+        rename_arguments=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "{0:<1}  {1:<2}\n"
+    assert modules == ["main"]
+
+
+def test_minify_keeps_global_declarations_distinct_from_renamed_parameters(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            state = True
+
+            def set_state(run):
+                global state
+                state = run
+
+            set_state(False)
+            print(state)
+            """
+        ),
+        "main",
+        keep_global_variables=False,
+        keep_module_names=True,
+        rename_arguments=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "False\n"
+    assert modules == ["main"]
+
+
+def test_minify_keeps_nonlocal_declarations_distinct_from_renamed_parameters(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def outer():
+                prog_name = "demo"
+                version = "1.0"
+
+                def callback(ctx, param, value):
+                    nonlocal prog_name, version
+                    return prog_name, version, ctx, param, value
+
+                return callback(1, 2, 3)
+
+            print(outer())
+            """
+        ),
+        "main",
+        keep_global_variables=False,
+        keep_module_names=True,
+        rename_arguments=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "('demo', '1.0', 1, 2, 3)\n"
+    assert modules == ["main"]
+
+
+def test_minify_preserves_placeholder_bodies_after_docstring_removal(tmp_path):
+    cleaned, modules = minify(
+        py(
+            '''
+            class Placeholder:
+                def close(self):
+                    """placeholder"""
+                    ...
+
+            print(Placeholder().close())
+            '''
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "None\n"
+    assert modules == ["main"]
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 10),
+    reason="pattern matching requires Python 3.10+",
+)
+def test_minify_preserves_match_case_spacing(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            def classify(state):
+                match state:
+                    case "remove":
+                        return 0
+                    case "normal":
+                        return 1
+                    case _:
+                        return 2
+
+            print(classify("normal"))
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n"
+    assert modules == ["main"]
