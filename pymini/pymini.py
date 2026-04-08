@@ -1,6 +1,7 @@
 import ast
 import copy
 import keyword
+from collections import Counter
 from typing import Dict, List, Optional, Set
 from .utils import variable_name_generator
 
@@ -299,6 +300,8 @@ class VariableShortener(NodeTransformer):
         self.class_member_mappings = {}
         self.callable_argument_infos = {}
         self.class_method_argument_infos = {}
+        self._class_public_member_reference_cache = {}
+        self._module_attribute_reference_cache = {}
         self.modules = set(modules)  # don't alias variables imported from these modules
         self.keep_global_variables = keep_global_variables
         self.rename_arguments = rename_arguments
@@ -416,28 +419,61 @@ class VariableShortener(NodeTransformer):
                 count += 1
         return count
 
-    def _public_member_reference_count(self, class_node, class_name, member_name):
-        count = 1
+    def _class_public_member_references(self, class_node):
+        cache_key = id(class_node)
+        cached = self._class_public_member_reference_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        name_loads = Counter()
+        attribute_loads_by_base = {}
         for current in ast.walk(class_node):
-            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load) and current.id == member_name:
-                count += 1
-            elif (
-                isinstance(current, ast.Attribute)
-                and current.attr == member_name
-                and isinstance(current.value, ast.Name)
-                and current.value.id in {"self", "cls", class_name}
-            ):
-                count += 1
+            if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+                name_loads[current.id] += 1
+            elif isinstance(current, ast.Attribute) and isinstance(current.value, ast.Name):
+                base_name = current.value.id
+                base_counts = attribute_loads_by_base.get(base_name)
+                if base_counts is None:
+                    base_counts = Counter()
+                    attribute_loads_by_base[base_name] = base_counts
+                base_counts[current.attr] += 1
+
+        cached = {
+            "name_loads": name_loads,
+            "attribute_loads_by_base": attribute_loads_by_base,
+        }
+        self._class_public_member_reference_cache[cache_key] = cached
+        return cached
+
+    def _module_attribute_references(self, module):
+        cache_key = id(module)
+        cached = self._module_attribute_reference_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        attribute_loads_by_base = {}
+        for current in ast.walk(module):
+            if not isinstance(current, ast.Attribute) or not isinstance(current.value, ast.Name):
+                continue
+            base_name = current.value.id
+            base_counts = attribute_loads_by_base.get(base_name)
+            if base_counts is None:
+                base_counts = Counter()
+                attribute_loads_by_base[base_name] = base_counts
+            base_counts[current.attr] += 1
+
+        self._module_attribute_reference_cache[cache_key] = attribute_loads_by_base
+        return attribute_loads_by_base
+
+    def _public_member_reference_count(self, class_node, class_name, member_name):
+        references = self._class_public_member_references(class_node)
+        count = 1 + references["name_loads"].get(member_name, 0)
+        attribute_loads_by_base = references["attribute_loads_by_base"]
+        for base_name in {"self", "cls", class_name}:
+            count += attribute_loads_by_base.get(base_name, {}).get(member_name, 0)
         module = self._containing_module(class_node)
         if module is not None:
-            for current in ast.walk(module):
-                if (
-                    isinstance(current, ast.Attribute)
-                    and current.attr == member_name
-                    and isinstance(current.value, ast.Name)
-                    and current.value.id == class_name
-                ):
-                    count += 1
+            count += self._module_attribute_references(module).get(class_name, {}).get(member_name, 0)
         return count
 
     def _public_global_reference_count(self, node, old_name):
