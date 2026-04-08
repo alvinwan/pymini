@@ -95,27 +95,32 @@ Wheel-specific failures:
 
 ## Speed
 
-| Input | pymini | pymini (`origin/main`) | pyminifier | python-minifier |
-| --- | ---: | ---: | ---: | ---: |
-| pyminifier.py | 11.8 ms | - | 1.7 ms | 7.5 ms |
-| pyminify.py | 25.3 ms | - | 4.4 ms | 24.2 ms |
-| click | 3.529 s | 9.290 s | - | - |
-| pytest | 15.592 s | 27.858 s | - | - |
-| TexSoup | 124.9 ms | - | 52.2 ms | 117.2 ms |
-| timefhuman | 352.0 ms | - | 71.0 ms | 266.0 ms |
-| pyminifier | 137.1 ms | - | 35.6 ms | 114.8 ms |
-| rich | 3286.6 ms | - | failed | 1838.7 ms |
+| Input | pymini | pyminifier | python-minifier |
+| --- | ---: | ---: | ---: |
+| pyminifier.py | 11.8 ms | 1.7 ms | 7.5 ms |
+| pyminify.py | 25.3 ms | 4.4 ms | 24.2 ms |
+| click | 3.529 s | failed | 914.4 ms |
+| pytest | 15.592 s | failed | 4.567 s |
+| TexSoup | 124.9 ms | 52.2 ms | 117.2 ms |
+| timefhuman | 352.0 ms | 71.0 ms | 266.0 ms |
+| pyminifier | 137.1 ms | 35.6 ms | 114.8 ms |
+| rich | 3.287 s | failed | 1.839 s |
 
 Speed failures:
 
+- click + pyminifier: minification fails on `click/__init__.py` with
+  `TypeError: 'NoneType' object is not subscriptable`.
+- pytest + pyminifier: minification fails on `_pytest/_argcomplete.py` with
+  `TypeError: 'NoneType' object is not subscriptable`.
 - rich + pyminifier: the same minification failure prevents a timing result.
 
 The single-file rows come from [benchmark_speed.py](./benchmark_speed.py). The
 package rows are one-shot package minification timings from the same
 environment used for the compression comparison. The `click` and `pytest`
-baseline column values are branch-vs-`origin/main` package-mode API timings on
-the checked-in fixtures under `.bench-repos`, measured with `.venv/bin/python`
-using `--rename-modules --rename-global-variables --rename-arguments`.
+rows were measured on the checked-in fixtures under `.bench-repos`; `pymini`
+used package mode with `--rename-modules --rename-global-variables
+--rename-arguments`, while the baseline tools minified each file independently
+in the preserved package tree.
 
 # Reproduce
 
