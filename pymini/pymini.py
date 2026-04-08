@@ -106,6 +106,7 @@ class ScopeLocalNameCollector(ast.NodeVisitor):
         self.bindings = set()
         self.loads = set()
         self.external_bindings = set()
+        self.args = set()
 
     def visit_Name(self, node):
         self.reserved_names.add(node.id)
@@ -117,6 +118,7 @@ class ScopeLocalNameCollector(ast.NodeVisitor):
     def visit_arg(self, node):
         self.reserved_names.add(node.arg)
         self.bindings.add(node.arg)
+        self.args.add(node.arg)
         if node.annotation is not None:
             self.visit(node.annotation)
 
@@ -302,6 +304,7 @@ class VariableShortener(NodeTransformer):
         self.class_method_argument_infos = {}
         self._class_public_member_reference_cache = {}
         self._module_attribute_reference_cache = {}
+        self._scope_analysis_cache = {}
         self.modules = set(modules)  # don't alias variables imported from these modules
         self.keep_global_variables = keep_global_variables
         self.rename_arguments = rename_arguments
@@ -676,61 +679,35 @@ class VariableShortener(NodeTransformer):
             current = getattr(current, "parent", None)
         return False
 
-    def _scope_bindings(self, node):
-        bindings = set()
-        globals_ = set()
-        nonlocals_ = set()
-        args = set()
+    def _scope_analysis(self, node):
+        cache_key = id(node)
+        cached = self._scope_analysis_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
-        class ScopeBindingCollector(ast.NodeVisitor):
-            def visit_Global(self, inner):
-                globals_.update(inner.names)
-
-            def visit_Nonlocal(self, inner):
-                nonlocals_.update(inner.names)
-
-            def visit_arg(self, inner):
-                args.add(inner.arg)
-                bindings.add(inner.arg)
-
-            def visit_Name(self, inner):
-                if isinstance(inner.ctx, ast.Store):
-                    bindings.add(inner.id)
-
-            def visit_FunctionDef(self, inner):
-                bindings.add(inner.name)
-
-            visit_AsyncFunctionDef = visit_FunctionDef
-
-            def visit_ClassDef(self, inner):
-                bindings.add(inner.name)
-
-            def visit_Lambda(self, inner):
-                return None
-
-            def visit_ListComp(self, inner):
-                return None
-
-            def visit_SetComp(self, inner):
-                return None
-
-            def visit_DictComp(self, inner):
-                return None
-
-            def visit_GeneratorExp(self, inner):
-                return None
-
-        collector = ScopeBindingCollector()
+        collector = ScopeLocalNameCollector()
         args_node = getattr(node, "args", None)
         if args_node is not None:
             collector.visit(args_node)
         for statement in getattr(node, "body", []):
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                collector.visit(statement)
-                continue
             collector.visit(statement)
-        bindings.difference_update(globals_ | nonlocals_)
-        return {"bindings": bindings, "globals": globals_, "args": args}
+
+        cached = {
+            "reserved_names": frozenset(collector.reserved_names),
+            "bindings": frozenset(collector.bindings - collector.external_bindings),
+            "external_bindings": frozenset(collector.external_bindings),
+            "args": frozenset(collector.args),
+        }
+        self._scope_analysis_cache[cache_key] = cached
+        return cached
+
+    def _scope_bindings(self, node):
+        analysis = self._scope_analysis(node)
+        return {
+            "bindings": set(analysis["bindings"]),
+            "globals": set(analysis["external_bindings"]),
+            "args": set(analysis["args"]),
+        }
 
     def _is_preserved_public_global_reference(self, name):
         if name not in self.public_global_names:
@@ -767,13 +744,10 @@ class VariableShortener(NodeTransformer):
         return False
 
     def _local_scope_state(self, node):
-        collector = ScopeLocalNameCollector()
-        collector.visit(node.args)
-        for statement in getattr(node, "body", []):
-            collector.visit(statement)
-        reserved_names = set(collector.reserved_names)
-        local_bindings = collector.bindings - collector.external_bindings
-        for name in collector.reserved_names - local_bindings:
+        analysis = self._scope_analysis(node)
+        reserved_names = set(analysis["reserved_names"])
+        local_bindings = analysis["bindings"]
+        for name in analysis["reserved_names"] - local_bindings:
             visible_name = self._lookup_visible_identifier(name)
             if visible_name is not None:
                 reserved_names.add(visible_name)
@@ -1991,8 +1965,8 @@ def append_public_aliases(tree, aliases):
     for node in aliases:
         inserted = ast.copy_location(node, root)
         inserted._pymini_generated = True
+        ast.fix_missing_locations(inserted)
         root.body.append(inserted)
-    ast.fix_missing_locations(tree)
 
 
 class Unparser:
