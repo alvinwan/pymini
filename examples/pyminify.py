@@ -1,23 +1,50 @@
-def a(event,context):
- c='RequestType';d='PhysicalResourceId';e='None';f='Status';g='SUCCESS';h='Tags';i='OldResourceProperties';l.info(event);j,k,m,n,o,p,q,r,s=(event,create_cert,add_tags,validate,wait_for_issuance,context,send,reinvoke,acm)
- try:
-  a=hashlib.new('md5',(j['RequestId']+j['StackId']).encode()).hexdigest();b=j['ResourceProperties']
-  if j[c]=='Create':
-   j[d]=e;j[d]=k(b,a);m(j[d],b);n(j[d],b)
-   if o(j[d],p):j[f]=g;return q(j)
-   else:return r(j,p)
-  elif j[c]=='Delete':
-   if j[d]!=e:s.delete_certificate(CertificateArn=j[d])
-   j[f]=g;return q(j)
-  elif j[c]=='Update':
-   if replace_cert(j):
-    j[d]=k(b,a);m(j[d],b);n(j[d],b)
-    if not o(j[d],p):return r(j,p)
-   else:
-    if h in j[i]:s.remove_tags_from_certificate(CertificateArn=j[d],Tags=j[i][h])
-    m(j[d],b)
-   j[f]=g;return q(j)
-  else:raise RuntimeError('Unknown RequestType')
- except Exception as b:l.exception('');j[f]='FAILED';j['Reason']=str(b);return q(j)
- del (j,k,m,n,o,p,q,r,s)
-handler=a
+def handler(event, context):
+    l.info(event)
+    try:
+        i_token = hashlib.new('md5', (event['RequestId'] + event['StackId']).encode()).hexdigest()
+        props = event['ResourceProperties']
+
+        if event['RequestType'] == 'Create':
+            event['PhysicalResourceId'] = 'None'
+            event['PhysicalResourceId'] = create_cert(props, i_token)
+            add_tags(event['PhysicalResourceId'], props)
+            validate(event['PhysicalResourceId'], props)
+
+            if wait_for_issuance(event['PhysicalResourceId'], context):
+                event['Status'] = 'SUCCESS'
+                return send(event)
+            else:
+                return reinvoke(event, context)
+
+        elif event['RequestType'] == 'Delete':
+            if event['PhysicalResourceId'] != 'None':
+                acm.delete_certificate(CertificateArn=event['PhysicalResourceId'])
+            event['Status'] = 'SUCCESS'
+            return send(event)
+
+        elif event['RequestType'] == 'Update':
+
+            if replace_cert(event):
+                event['PhysicalResourceId'] = create_cert(props, i_token)
+                add_tags(event['PhysicalResourceId'], props)
+                validate(event['PhysicalResourceId'], props)
+
+                if not wait_for_issuance(event['PhysicalResourceId'], context):
+                    return reinvoke(event, context)
+            else:
+                if 'Tags' in event['OldResourceProperties']:
+                    acm.remove_tags_from_certificate(CertificateArn=event['PhysicalResourceId'],
+                                                     Tags=event['OldResourceProperties']['Tags'])
+
+                add_tags(event['PhysicalResourceId'], props)
+
+            event['Status'] = 'SUCCESS'
+            return send(event)
+        else:
+            raise RuntimeError('Unknown RequestType')
+
+    except Exception as ex:
+        l.exception('')
+        event['Status'] = 'FAILED'
+        event['Reason'] = str(ex)
+        return send(event)

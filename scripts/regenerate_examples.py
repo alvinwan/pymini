@@ -8,20 +8,23 @@ from pymini import minify
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_DIR = ROOT / "tests" / "examples"
+SOURCE_DIR = ROOT / "examples"
 OUTPUT_DIR = ROOT / "examples"
+GENERATED_SUFFIX = ".pymini.py"
 MINIFY_OPTIONS = {"keep_global_variables": True}
 
 
 def generated_examples() -> dict[str, str]:
     outputs: dict[str, str] = {}
     for source_path in sorted(SOURCE_DIR.glob("*.py")):
+        if source_path.name.endswith(GENERATED_SUFFIX):
+            continue
         cleaned, _ = minify(
             source_path.read_text(encoding="utf-8"),
             source_path.stem,
             **MINIFY_OPTIONS,
         )
-        outputs[source_path.name] = cleaned[0]
+        outputs[source_path.name.removesuffix(".py") + GENERATED_SUFFIX] = cleaned[0]
     return outputs
 
 
@@ -39,14 +42,16 @@ def check_examples() -> list[str]:
         if not output_path.exists() or output_path.read_text(encoding="utf-8") != source:
             mismatches.append(name)
     extra_outputs = sorted(
-        path.name for path in OUTPUT_DIR.glob("*.py") if path.name not in expected
+        path.name
+        for path in OUTPUT_DIR.glob(f"*{GENERATED_SUFFIX}")
+        if path.name not in expected
     )
     return mismatches + extra_outputs
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Regenerate the checked-in minified example outputs."
+        description="Regenerate the checked-in minified example companions."
     )
     parser.add_argument(
         "--check",
