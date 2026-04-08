@@ -97,30 +97,35 @@ Wheel-specific failures:
 
 | Input | pymini | pyminifier | python-minifier |
 | --- | ---: | ---: | ---: |
-| pyminifier.py | 11.8 ms | 1.7 ms | 7.5 ms |
-| pyminify.py | 25.3 ms | 4.4 ms | 24.2 ms |
-| click | 3.529 s | failed | 914.4 ms |
-| pytest | 15.592 s | failed | 4.567 s |
-| TexSoup | 124.9 ms | 52.2 ms | 117.2 ms |
-| timefhuman | 352.0 ms | 71.0 ms | 266.0 ms |
-| pyminifier | 137.1 ms | 35.6 ms | 114.8 ms |
-| rich | 3.287 s | failed | 1.839 s |
+| pyminifier.py | 3.0 ms | 0.8 ms | 2.6 ms |
+| pyminify.py | 7.9 ms | 2.0 ms | 6.7 ms |
+| click | 855.2 ms | failed | 823.9 ms |
+| pytest | 3.258 s | failed | 3.156 s |
+| TexSoup | 218.6 ms | failed | 251.1 ms |
+| timefhuman | 441.5 ms | failed | 450.6 ms |
+| pyminifier | 196.7 ms | 68.5 ms | 191.7 ms |
+| rich | 3.226 s | failed | 3.080 s |
 
 Speed failures:
 
+- TexSoup + pyminifier: minification fails on `__init__.py` with
+  `TypeError: 'NoneType' object is not subscriptable`.
 - click + pyminifier: minification fails on `click/__init__.py` with
   `TypeError: 'NoneType' object is not subscriptable`.
 - pytest + pyminifier: minification fails on `_pytest/_argcomplete.py` with
   `TypeError: 'NoneType' object is not subscriptable`.
-- rich + pyminifier: the same minification failure prevents a timing result.
+- rich + pyminifier: minification fails on `rich/__init__.py` with
+  `TypeError: 'NoneType' object is not subscriptable`.
+- timefhuman + pyminifier: minification fails on `renderers.py` with
+  `TypeError: 'NoneType' object is not subscriptable`.
 
 The single-file rows come from [benchmark_speed.py](./benchmark_speed.py). The
-package rows are one-shot package minification timings from the same
-environment used for the compression comparison. The `click` and `pytest`
-rows were measured on the checked-in fixtures under `.bench-repos`; `pymini`
-used package mode with `--rename-modules --rename-global-variables
---rename-arguments`, while the baseline tools minified each file independently
-in the preserved package tree.
+package rows are averages of three fresh-process runs from the same
+environment used for the compression comparison. `pymini` used package mode
+with `--rename-modules --rename-global-variables --rename-arguments`, while
+the baseline tools minified each file independently in the preserved package
+tree. The `click`, `pytest`, and `pyminifier` rows use the checked-in fixtures
+under `.bench-repos`; the other package rows use local package checkouts.
 
 # Reproduce
 
@@ -138,6 +143,8 @@ The larger package comparisons in this file were run against these checkouts:
 - `timefhuman`
 - `pyminifier`
 - `rich`
+- `click`
+- `pytest`
 
 # Validation
 
