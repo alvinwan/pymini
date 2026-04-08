@@ -106,17 +106,7 @@ Wheel-specific failures:
 | pyminifier | 196.7 ms | 68.5 ms | 191.7 ms |
 | rich | 3.226 s | failed | 3.080 s |
 
-Speed failures:
-
-- TexSoup + pyminifier: minification fails on `__init__.py` with
-  `TypeError: 'NoneType' object is not subscriptable`.
-- click + pyminifier: minification fails on `click/__init__.py` with
-  `TypeError: 'NoneType' object is not subscriptable`.
-- pytest + pyminifier: minification fails on `_pytest/_argcomplete.py` with
-  `TypeError: 'NoneType' object is not subscriptable`.
-- rich + pyminifier: minification fails on `rich/__init__.py` with
-  `TypeError: 'NoneType' object is not subscriptable`.
-- timefhuman + pyminifier: minification fails on `renderers.py` with
+pyminifier minification fails on `__init__.py` with
   `TypeError: 'NoneType' object is not subscriptable`.
 
 The single-file rows come from [benchmark_speed.py](./benchmark_speed.py). The
