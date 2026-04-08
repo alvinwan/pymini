@@ -277,9 +277,8 @@ class VariableShortener(NodeTransformer):
     # - attribute rewriting is limited to owners we can prove from the AST
     #   (`self`, `cls`, or known class names), not arbitrary dynamic receivers
     #
-    # Keep regression coverage in tests/test_api.py and checked-in example
-    # outputs in sync via scripts/regenerate_examples.py whenever these rules
-    # change.
+    # Keep regression coverage in tests/test_api.py and the checked-in example
+    # outputs under tests/examples in sync whenever these rules change.
     def __init__(
         self,
         generator,
