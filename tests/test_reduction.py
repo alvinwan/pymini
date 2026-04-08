@@ -4,8 +4,8 @@ import pytest
 
 
 @pytest.mark.parametrize('path', [
-    'examples/pyminifier.py',
-    'examples/pyminify.py',
+    'tests/examples/pyminifier.py',
+    'tests/examples/pyminify.py',
 ])
 def test_reduction(path):
     source = Path(path).read_text(encoding="utf-8")
