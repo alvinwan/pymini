@@ -97,25 +97,21 @@ Wheel-specific failures:
 
 | Input | pymini | pyminifier | python-minifier |
 | --- | ---: | ---: | ---: |
-| pyminifier.py | 3.0 ms | 0.8 ms | 2.6 ms |
-| pyminify.py | 7.9 ms | 2.0 ms | 6.7 ms |
-| click | 855.2 ms | failed | 823.9 ms |
-| pytest | 3.258 s | failed | 3.156 s |
-| TexSoup | 218.6 ms | failed | 251.1 ms |
-| timefhuman | 441.5 ms | failed | 450.6 ms |
-| pyminifier | 196.7 ms | 68.5 ms | 191.7 ms |
-| rich | 3.226 s | failed | 3.080 s |
+| pyminifier.py | 9.4 ms | 1.3 ms | 5.5 ms |
+| pyminify.py | 17.2 ms | 4.2 ms | 16.2 ms |
+| click | 4.943 s | failed | 6.478 s |
+| pytest | 32.292 s | failed | 23.964 s |
+| pyminifier | 1.256 s | 131.1 ms | 610.8 ms |
 
 pyminifier minification fails on `__init__.py` with
   `TypeError: 'NoneType' object is not subscriptable`.
 
-The single-file rows come from [benchmark_speed.py](./benchmark_speed.py). The
-package rows are averages of three fresh-process runs from the same
-environment used for the compression comparison. `pymini` used package mode
-with `--rename-modules --rename-global-variables --rename-arguments`, while
-the baseline tools minified each file independently in the preserved package
-tree. The `click`, `pytest`, and `pyminifier` rows use the checked-in fixtures
-under `.bench-repos`; the other package rows use local package checkouts.
+The rows above come from [benchmark_speed.py](./benchmark_speed.py). The
+single-file rows average ten in-process runs after one warmup. The checked-in
+package rows average three in-process runs after one warmup over the fixtures
+under `.bench-repos`. `pymini` uses package mode with
+`--rename-modules --rename-global-variables --rename-arguments`, while the
+baseline tools minify each file independently in the preserved package tree.
 
 # Reproduce
 
@@ -123,18 +119,14 @@ Recompute the speed measurements with:
 
 ```bash
 python3 -m pip install -e ".[dev]" python-minifier
-git clone https://github.com/liftoff/pyminifier /tmp/pyminifier
-PYTHONPATH=. .venv/bin/python benchmarks/benchmark_speed.py --pyminifier-root /tmp/pyminifier
+PYTHONPATH=. .venv/bin/python benchmarks/benchmark_speed.py
 ```
 
-The larger package comparisons in this file were run against these checkouts:
+The checked-in speed fixtures in this file live under `.bench-repos`:
 
-- `TexSoup`
-- `timefhuman`
-- `pyminifier`
-- `rich`
 - `click`
 - `pytest`
+- `pyminifier`
 
 # Validation
 
