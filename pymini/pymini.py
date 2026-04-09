@@ -1426,16 +1426,6 @@ def _is_unsupported_hoisted_string_context(node):
         current = parent
     return False
 
-
-def _is_docstring_constant(node):
-    expr = getattr(node, "parent", None)
-    if not isinstance(expr, ast.Expr) or expr.value is not node:
-        return False
-    owner = getattr(expr, "parent", None)
-    body = getattr(owner, "body", None)
-    return bool(body) and body[0] is expr
-
-
 def _reserved_names_in_node(node):
     names = set()
     for current in ast.walk(node):
@@ -1464,51 +1454,149 @@ class RepeatedStringHoister(Transformer):
             ParentSetter().visit(tree)
             collector = RepeatedStringCollector()
             collector.visit(tree)
-            RepeatedStringRewriter(self.generator, collector.repeated_strings_by_scope).visit(tree)
+            RepeatedStringRewriter(
+                self.generator,
+                collector.repeated_strings_by_scope,
+                collector.reserved_names_by_scope,
+            ).visit(tree)
         return trees
 
 
 class RepeatedStringCollector(ast.NodeVisitor):
     def __init__(self):
         self.scope_stack = []
+        self.reserved_names_stack = []
         self.repeated_strings_by_scope = {}
+        self.reserved_names_by_scope = {}
 
-    def _visit_scope(self, node):
-        counts = {}
-        self.scope_stack.append(counts)
-        for statement in node.body:
+    def _add_reserved(self, *names):
+        if not names:
+            return
+        for reserved_names in self.reserved_names_stack:
+            reserved_names.update(names)
+
+    def _visit_body(self, body):
+        for index, statement in enumerate(body):
+            if (
+                index == 0
+                and isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Constant)
+                and isinstance(statement.value.value, str)
+            ):
+                continue
             self.visit(statement)
+
+    def _visit_function_annotations(self, node):
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        for arg in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
+            if arg.annotation is not None:
+                self.visit(arg.annotation)
+        if node.args.vararg is not None and node.args.vararg.annotation is not None:
+            self.visit(node.args.vararg.annotation)
+        if node.args.kwarg is not None and node.args.kwarg.annotation is not None:
+            self.visit(node.args.kwarg.annotation)
+        for default in node.args.defaults:
+            self.visit(default)
+        for default in node.args.kw_defaults:
+            if default is not None:
+                self.visit(default)
+        if node.returns is not None:
+            self.visit(node.returns)
+
+    def _visit_function_bindings(self, node):
+        for arg in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
+            self._add_reserved(arg.arg)
+        if node.args.vararg is not None:
+            self._add_reserved(node.args.vararg.arg)
+        if node.args.kwarg is not None:
+            self._add_reserved(node.args.kwarg.arg)
+
+    def _visit_class_outer_context(self, node):
+        for base in node.bases:
+            self.visit(base)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+
+    def _visit_scope(self, node, *, bind_name=None, outer_context=None, setup=None):
+        if bind_name is not None and self.scope_stack:
+            self._add_reserved(bind_name)
+        if outer_context is not None:
+            outer_context(node)
+        counts = {}
+        reserved_names = set()
+        self.scope_stack.append(counts)
+        self.reserved_names_stack.append(reserved_names)
+        if setup is not None:
+            setup(node)
+        self._visit_body(node.body)
         self.scope_stack.pop()
+        self.reserved_names_stack.pop()
         if counts:
             self.repeated_strings_by_scope[id(node)] = counts
+        self.reserved_names_by_scope[id(node)] = reserved_names
 
     def visit_Module(self, node):
         self._visit_scope(node)
 
     def visit_FunctionDef(self, node):
-        self._visit_scope(node)
+        self._visit_scope(
+            node,
+            bind_name=node.name,
+            outer_context=self._visit_function_annotations,
+            setup=self._visit_function_bindings,
+        )
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_ClassDef(self, node):
-        self._visit_scope(node)
+        self._visit_scope(
+            node,
+            bind_name=node.name,
+            outer_context=self._visit_class_outer_context,
+        )
+
+    def visit_Name(self, node):
+        self._add_reserved(node.id)
+
+    def visit_arg(self, node):
+        self._add_reserved(node.arg)
+
+    def visit_Global(self, node):
+        self._add_reserved(*node.names)
+
+    visit_Nonlocal = visit_Global
+
+    def visit_ExceptHandler(self, node):
+        if node.name:
+            self._add_reserved(node.name)
+        self.generic_visit(node)
+
+    def visit_Import(self, node):
+        self._add_reserved(*(alias.asname or alias.name.split(".", 1)[0] for alias in node.names))
+
+    def visit_ImportFrom(self, node):
+        self._add_reserved(
+            *(alias.asname or alias.name for alias in node.names if alias.name != "*")
+        )
 
     def visit_Constant(self, node):
         if not self.scope_stack or not isinstance(node.value, str):
             return
         if _is_unsupported_hoisted_string_context(node):
             return
-        if _is_docstring_constant(node):
-            return
         counts = self.scope_stack[-1]
         counts[node.value] = counts.get(node.value, 0) + 1
 
 
 class RepeatedStringRewriter(ast.NodeTransformer):
-    def __init__(self, generator, repeated_strings_by_scope):
+    def __init__(self, generator, repeated_strings_by_scope, reserved_names_by_scope):
         super().__init__()
         self.generator = generator
         self.repeated_strings_by_scope = repeated_strings_by_scope
+        self.reserved_names_by_scope = reserved_names_by_scope
         self.scope_stack = []
 
     def _next_safe_name(self, reserved_names):
@@ -1537,7 +1625,7 @@ class RepeatedStringRewriter(ast.NodeTransformer):
             scope_type = "class"
         else:
             scope_type = "function"
-        reserved_names = _reserved_names_in_node(node)
+        reserved_names = set(self.reserved_names_by_scope.get(id(node), ()))
         return {
             value: self._next_safe_name(reserved_names)
             for value, count in counts.items()
@@ -1577,10 +1665,24 @@ class RepeatedStringRewriter(ast.NodeTransformer):
         cleanup._pymini_generated = True
         return body + [cleanup]
 
+    def _rewrite_body(self, body):
+        rewritten = []
+        for index, statement in enumerate(body):
+            if (
+                index == 0
+                and isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Constant)
+                and isinstance(statement.value.value, str)
+            ):
+                rewritten.append(statement)
+                continue
+            rewritten.append(self.visit(statement))
+        return rewritten
+
     def visit_Module(self, node):
         mapping = self._scope_mapping(node)
         self.scope_stack.append(mapping)
-        node.body = [self.visit(statement) for statement in node.body]
+        node.body = self._rewrite_body(node.body)
         self.scope_stack.pop()
         if mapping:
             node.body = self._prepend_assignments(node.body, mapping)
@@ -1590,7 +1692,7 @@ class RepeatedStringRewriter(ast.NodeTransformer):
     def visit_FunctionDef(self, node):
         mapping = self._scope_mapping(node)
         self.scope_stack.append(mapping)
-        node.body = [self.visit(statement) for statement in node.body]
+        node.body = self._rewrite_body(node.body)
         self.scope_stack.pop()
         if mapping:
             node.body = self._prepend_assignments(node.body, mapping)
@@ -1601,7 +1703,7 @@ class RepeatedStringRewriter(ast.NodeTransformer):
     def visit_ClassDef(self, node):
         mapping = self._scope_mapping(node)
         self.scope_stack.append(mapping)
-        node.body = [self.visit(statement) for statement in node.body]
+        node.body = self._rewrite_body(node.body)
         self.scope_stack.pop()
         if mapping:
             node.body = self._prepend_assignments(node.body, mapping)
@@ -1617,8 +1719,6 @@ class RepeatedStringRewriter(ast.NodeTransformer):
         if not self.scope_stack or not isinstance(node.value, str):
             return node
         if _is_unsupported_hoisted_string_context(node):
-            return node
-        if _is_docstring_constant(node):
             return node
         mapping = self.scope_stack[-1]
         if node.value not in mapping:
