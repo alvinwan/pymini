@@ -91,6 +91,7 @@ def test_minify_simplifies_returns():
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     assert cleaned == ["def f():return 1"]
@@ -108,6 +109,7 @@ def test_minify_handles_subscript_callables(tmp_path):
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     module_path = tmp_path / "module.py"
@@ -186,6 +188,7 @@ def test_minify_hoists_repeated_strings_inside_functions(tmp_path):
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     tree = ast.parse(cleaned[0])
@@ -224,6 +227,7 @@ def test_minify_hoists_repeated_strings_at_module_scope_without_leaking_helpers(
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     tree = ast.parse(cleaned[0])
@@ -267,6 +271,7 @@ def test_minify_skips_unprofitable_short_string_hoists_at_module_scope(tmp_path)
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     assert cleaned[0].count("'Foo'") == 2
@@ -300,6 +305,7 @@ def test_minify_hoists_repeated_strings_into_class_bodies_without_leaking_helper
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     tree = ast.parse(cleaned[0])
@@ -335,6 +341,7 @@ def test_minify_hoisted_strings_do_not_collide_with_lambda_parameters(tmp_path):
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     module_path = tmp_path / "module.py"
@@ -365,6 +372,7 @@ def test_minify_hoisted_strings_do_not_conflict_with_global_declarations(tmp_pat
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     module_path = tmp_path / "module.py"
@@ -397,6 +405,7 @@ def test_minify_aliases_repeated_names_within_single_statements(tmp_path):
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     tree = ast.parse(cleaned[0])
@@ -428,6 +437,7 @@ def test_minify_aliases_repeated_module_names_without_leaking_helpers(tmp_path):
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     tree = ast.parse(cleaned[0])
@@ -457,6 +467,50 @@ def test_minify_aliases_repeated_module_names_without_leaking_helpers(tmp_path):
     assert modules == ["main"]
 
 
+def test_minify_defaults_to_fast_profile_and_fast_false_restores_slow_pipeline(tmp_path):
+    cleaned, modules = minify(
+        py(
+            """
+            IMPORTANT_PUBLIC_NAME = 3
+            print("PhysicalResourceId", "PhysicalResourceId", IMPORTANT_PUBLIC_NAME, IMPORTANT_PUBLIC_NAME)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+    )
+    slow_cleaned, _ = minify(
+        py(
+            """
+            IMPORTANT_PUBLIC_NAME = 3
+            print("PhysicalResourceId", "PhysicalResourceId", IMPORTANT_PUBLIC_NAME, IMPORTANT_PUBLIC_NAME)
+            """
+        ),
+        "main",
+        keep_global_variables=True,
+        keep_module_names=True,
+        fast=False,
+    )
+
+    assert cleaned[0].count("PhysicalResourceId") == 2
+    assert "del(" not in cleaned[0]
+    assert slow_cleaned[0].count("PhysicalResourceId") == 1
+    assert "del" in slow_cleaned[0]
+
+    module_path = tmp_path / "module.py"
+    module_path.write_text(cleaned[0], encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(module_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "PhysicalResourceId PhysicalResourceId 3 3\n"
+    assert modules == ["main"]
+
+
 def test_minify_preserves_global_names_without_breaking_shadowed_locals(tmp_path):
     cleaned, modules = minify(
         py(
@@ -473,6 +527,7 @@ def test_minify_preserves_global_names_without_breaking_shadowed_locals(tmp_path
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     module_path = tmp_path / "module.py"
@@ -1524,6 +1579,7 @@ def test_minify_keeps_future_imports_before_hoisted_helpers(tmp_path):
         "main",
         keep_global_variables=True,
         keep_module_names=True,
+        fast=False,
     )
 
     tree = ast.parse(cleaned[0])

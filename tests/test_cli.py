@@ -348,6 +348,47 @@ def test_cli_can_rename_arguments_when_requested(tmp_path):
     assert execution.stdout == "3\n"
 
 
+def test_cli_defaults_to_fast_profile_and_slow_opt_in_restores_extra_passes(tmp_path):
+    source_dir = tmp_path / "src"
+    output_dir = tmp_path / "out"
+    slow_output_dir = tmp_path / "out-slow"
+    source_dir.mkdir()
+    write_py(
+        source_dir / "main.py",
+        """
+        IMPORTANT_PUBLIC_NAME = 3
+        print("PhysicalResourceId", "PhysicalResourceId", IMPORTANT_PUBLIC_NAME, IMPORTANT_PUBLIC_NAME)
+        """,
+    )
+
+    result = run_cli(
+        "package",
+        str(source_dir),
+        "-o",
+        str(output_dir),
+    )
+    slow_result = run_cli(
+        "package",
+        str(source_dir),
+        "--slow",
+        "-o",
+        str(slow_output_dir),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert slow_result.returncode == 0, slow_result.stderr
+    output = (output_dir / "main.py").read_text(encoding="utf-8")
+    slow_output = (slow_output_dir / "main.py").read_text(encoding="utf-8")
+    assert output.count("PhysicalResourceId") == 2
+    assert "del(" not in output
+    assert slow_output.count("PhysicalResourceId") == 1
+    assert "del" in slow_output
+
+    execution = run_python_file(output_dir / "main.py")
+    assert execution.returncode == 0, execution.stderr
+    assert execution.stdout == "PhysicalResourceId PhysicalResourceId 3 3\n"
+
+
 def test_cli_package_mode_supports_relative_star_reexports(tmp_path):
     source_dir = tmp_path / "src"
     output_dir = tmp_path / "out"

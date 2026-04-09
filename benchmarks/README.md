@@ -11,6 +11,16 @@ the benchmark harness used to reproduce them.
 
 ![Benchmark summary chart comparing minify-only minification and minify-plus-wheel compression across packages](./summary.svg)
 
+## Profiles
+
+`pymini` now defaults to the faster profile. The slower full pipeline is still
+available with `pymini ... --slow` or `minify(..., fast=False)`.
+
+Those extra hoisting and aliasing passes are input-sensitive: they help some
+inputs, do nothing on some, and can slightly increase output on others. The
+package size tables below keep using the slower profile so they stay directly
+comparable with earlier revisions.
+
 ## Compression
 
 Compression multipliers below are all relative to the original raw Python
@@ -78,7 +88,8 @@ repo's actual packaging metadata.
 | pyminifier | 79,693 | 61,088 | 64,019 | 76,101 |
 | rich | 310,458 | 183,326 | failed | 266,399 |
 
-`pymini` is benchmarked with `--rename-modules --rename-global-variables --rename-arguments`.
+The `pymini` compression tables above use
+`--slow --rename-modules --rename-global-variables --rename-arguments`.
 The `pymini` rows use package mode. The baselines minify each file
 independently in the preserved package tree. For wheel rows, each tool first
 rewrites the package tree, then `python -m build --wheel` runs on that
@@ -95,27 +106,23 @@ Wheel-specific failures:
 
 ## Speed
 
-| Input | pymini | pyminifier | python-minifier |
-| --- | ---: | ---: | ---: |
-| pyminifier.py | 3.0 ms | 0.8 ms | 2.6 ms |
-| pyminify.py | 7.9 ms | 2.0 ms | 6.7 ms |
-| click | 855.2 ms | failed | 823.9 ms |
-| pytest | 3.258 s | failed | 3.156 s |
-| TexSoup | 218.6 ms | failed | 251.1 ms |
-| timefhuman | 441.5 ms | failed | 450.6 ms |
-| pyminifier | 196.7 ms | 68.5 ms | 191.7 ms |
-| rich | 3.226 s | failed | 3.080 s |
+The current default favors speed. On the checked-in fixtures, the slower
+profile adds about 25-65% runtime.
 
-pyminifier minification fails on `__init__.py` with
-  `TypeError: 'NoneType' object is not subscriptable`.
+| Input | pymini | pymini --slow | pymini bytes | pymini --slow bytes |
+| --- | ---: | ---: | ---: | ---: |
+| pyminifier.py | 3.0 ms | 3.5 ms | 435 | 435 |
+| pyminify.py | 5.3 ms | 7.9 ms | 1,242 | 935 |
+| click | 677.8 ms | 913.7 ms | 120,579 | 121,176 |
+| pytest | 2.797 s | 3.669 s | 503,996 | 508,888 |
+| pyminifier | 142.9 ms | 194.8 ms | 31,481 | 31,332 |
 
-The single-file rows come from [benchmark_speed.py](./benchmark_speed.py). The
-package rows are averages of three fresh-process runs from the same
-environment used for the compression comparison. `pymini` used package mode
-with `--rename-modules --rename-global-variables --rename-arguments`, while
-the baseline tools minified each file independently in the preserved package
-tree. The `click`, `pytest`, and `pyminifier` rows use the checked-in fixtures
-under `.bench-repos`; the other package rows use local package checkouts.
+The single-file rows come from [benchmark_speed.py](./benchmark_speed.py).
+The package rows above use the checked-in fixtures under `.bench-repos`.
+
+The slower extra passes are not monotonic: `pyminify.py` and the
+`pyminifier` package shrink a bit more, while `click` and `pytest` end up
+slightly larger.
 
 # Reproduce
 
@@ -123,8 +130,7 @@ Recompute the speed measurements with:
 
 ```bash
 python3 -m pip install -e ".[dev]" python-minifier
-git clone https://github.com/liftoff/pyminifier /tmp/pyminifier
-PYTHONPATH=. .venv/bin/python benchmarks/benchmark_speed.py --pyminifier-root /tmp/pyminifier
+PYTHONPATH=. .venv/bin/python benchmarks/benchmark_speed.py
 ```
 
 The larger package comparisons in this file were run against these checkouts:
@@ -140,6 +146,9 @@ The larger package comparisons in this file were run against these checkouts:
 
 Each package result above was checked against the repo's own test suite using a
 temporary minified package tree on `PYTHONPATH`.
+
+These validation rows correspond to the same `pymini --slow` rewrites used for
+the compression tables above.
 
 | Package | pymini | pyminifier | python-minifier |
 | --- | --- | --- | --- |
@@ -161,7 +170,7 @@ To reproduce that flow locally:
 ```bash
 git clone https://github.com/alvinwan/TexSoup /tmp/texsoup
 mkdir -p /tmp/texsoup-out/TexSoup
-pymini package /tmp/texsoup/TexSoup -o /tmp/texsoup-out/TexSoup --rename-modules --rename-global-variables --rename-arguments
+pymini package /tmp/texsoup/TexSoup -o /tmp/texsoup-out/TexSoup --slow --rename-modules --rename-global-variables --rename-arguments
 cp -R /tmp/texsoup/tests /tmp/texsoup-tests
 PYTHONPATH=/tmp/texsoup-out:/tmp/texsoup-tests python3 -m pytest /tmp/texsoup-tests/tests -o addopts=''
 ```

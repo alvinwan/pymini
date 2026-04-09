@@ -18,11 +18,15 @@ from pymini.cli import load_sources, main as cli_main, resolve_python_files
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_DIR = ROOT / "tests" / "examples"
 DEFAULT_TEXSOUP_ROOT = Path("/tmp/pymini-texsoup-repo/TexSoup")
-DEFAULT_PYMINIFIER_ROOT = Path("/tmp/pymini-pyminifier-src/pyminifier-2.1")
-PYMINI_AGGRESSIVE_OPTIONS = {
+DEFAULT_PYMINIFIER_ROOT = ROOT / ".bench-repos" / "pyminifier-tool"
+PYMINI_DEFAULT_OPTIONS = {
     "keep_module_names": False,
     "keep_global_variables": False,
     "rename_arguments": True,
+}
+PYMINI_SLOW_OPTIONS = {
+    **PYMINI_DEFAULT_OPTIONS,
+    "fast": False,
 }
 
 
@@ -50,13 +54,14 @@ def benchmark_transform(
     }
 
 
-def pymini_single_file_transform(path: Path):
+def pymini_single_file_transform(path: Path, *, fast: bool = True):
     def transform(source: str) -> str:
         outputs, _ = minify(
             source,
             path.stem,
             keep_global_variables=False,
             rename_arguments=True,
+            fast=fast,
         )
         return outputs[0]
 
@@ -101,14 +106,16 @@ def benchmark_package_api(
     *,
     iterations: int,
     warmup: int,
+    fast: bool = True,
 ) -> dict[str, float]:
     paths, module_root = resolve_python_files(str(package_root))
     sources, modules, _ = load_sources(paths, module_root=module_root)
+    options = PYMINI_DEFAULT_OPTIONS if fast else PYMINI_SLOW_OPTIONS
     for _ in range(warmup):
         minify(
             sources,
             modules,
-            **PYMINI_AGGRESSIVE_OPTIONS,
+            **options,
         )
     samples = []
     outputs = None
@@ -117,7 +124,7 @@ def benchmark_package_api(
         outputs, _ = minify(
             sources,
             modules,
-            **PYMINI_AGGRESSIVE_OPTIONS,
+            **options,
         )
         samples.append(perf_counter() - start)
     raw_bytes = sum(len(source.encode()) for source in sources)
@@ -132,24 +139,25 @@ def benchmark_package_api(
     }
 
 
-def benchmark_package_cli(package_root: Path, *, iterations: int) -> dict[str, float]:
+def benchmark_package_cli(package_root: Path, *, iterations: int, fast: bool = True) -> dict[str, float]:
     samples = []
     output_bytes = 0
     for _ in range(iterations):
         output_dir = Path(tempfile.mkdtemp(prefix="pymini-bench-"))
         try:
             start = perf_counter()
-            rc = cli_main(
-                [
-                    "package",
-                    str(package_root),
-                    "--rename-modules",
-                    "--rename-global-variables",
-                    "--rename-arguments",
-                    "-o",
-                    str(output_dir),
-                ]
-            )
+            argv = [
+                "package",
+                str(package_root),
+                "--rename-modules",
+                "--rename-global-variables",
+                "--rename-arguments",
+                "-o",
+                str(output_dir),
+            ]
+            if not fast:
+                argv.insert(-2, "--slow")
+            rc = cli_main(argv)
             samples.append(perf_counter() - start)
             if rc != 0:
                 raise RuntimeError(f"pymini CLI returned {rc}")
@@ -166,7 +174,10 @@ def print_example_results(
     warmup: int,
     pyminifier_root: Path,
 ) -> None:
-    tool_factories = [("pymini", pymini_single_file_transform)]
+    tool_factories = [
+        ("pymini", lambda path: pymini_single_file_transform(path, fast=True)),
+        ("pymini-slow", lambda path: pymini_single_file_transform(path, fast=False)),
+    ]
     python_minifier = load_python_minifier()
     if python_minifier is not None:
         tool_factories.append(("python-minifier", python_minifier))
@@ -210,10 +221,23 @@ def print_package_results(
         texsoup_root,
         iterations=package_api_iterations,
         warmup=warmup,
+        fast=True,
+    )
+    api_slow_result = benchmark_package_api(
+        texsoup_root,
+        iterations=package_api_iterations,
+        warmup=warmup,
+        fast=False,
     )
     cli_result = benchmark_package_cli(
         texsoup_root,
         iterations=package_cli_iterations,
+        fast=True,
+    )
+    cli_slow_result = benchmark_package_cli(
+        texsoup_root,
+        iterations=package_cli_iterations,
+        fast=False,
     )
 
     print()
@@ -228,8 +252,20 @@ def print_package_results(
         f"{api_result['throughput_kb_s']:.1f}"
     )
     print(
+        f"TexSoup-api-slow\t"
+        f"{int(api_slow_result['files'])}\t"
+        f"{int(api_slow_result['bytes'])}\t"
+        f"{int(api_slow_result['output_bytes'])}\t"
+        f"{api_slow_result['avg_ms']:.3f}\t"
+        f"{api_slow_result['throughput_kb_s']:.1f}"
+    )
+    print(
         f"TexSoup-cli\t-\t-\t{int(cli_result['output_bytes'])}\t"
         f"{cli_result['avg_ms']:.3f}\t-"
+    )
+    print(
+        f"TexSoup-cli-slow\t-\t-\t{int(cli_slow_result['output_bytes'])}\t"
+        f"{cli_slow_result['avg_ms']:.3f}\t-"
     )
 
 

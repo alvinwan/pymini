@@ -1346,6 +1346,7 @@ class FusedVariableShortener(Transformer):
         self.keep_module_names = keep_module_names
 
     def transform(self, *trees):
+        _invalidate_reserved_names_cache()
         original_modules = list(self.module_to_shortener)
         packages = package_modules(original_modules)
         module_to_module = {}
@@ -1437,21 +1438,39 @@ def _is_docstring_constant(node):
 
 
 def _reserved_names_in_node(node):
+    cached_version = getattr(node, "_pymini_reserved_names_version", None)
+    if cached_version == _RESERVED_NAMES_CACHE_VERSION:
+        return node._pymini_reserved_names
+
     names = set()
-    for current in ast.walk(node):
-        if isinstance(current, ast.Name):
-            names.add(current.id)
-        elif isinstance(current, ast.arg):
-            names.add(current.arg)
-        elif isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(current.name)
-        elif isinstance(current, ast.alias):
-            names.add(current.asname or current.name.split(".", 1)[0])
-        elif isinstance(current, (ast.Global, ast.Nonlocal)):
-            names.update(current.names)
-        elif isinstance(current, ast.ExceptHandler) and current.name:
-            names.add(current.name)
-    return names
+    if isinstance(node, ast.Name):
+        names.add(node.id)
+    elif isinstance(node, ast.arg):
+        names.add(node.arg)
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        names.add(node.name)
+    elif isinstance(node, ast.alias):
+        names.add(node.asname or node.name.split(".", 1)[0])
+    elif isinstance(node, (ast.Global, ast.Nonlocal)):
+        names.update(node.names)
+    elif isinstance(node, ast.ExceptHandler) and node.name:
+        names.add(node.name)
+
+    for child in ast.iter_child_nodes(node):
+        names.update(_reserved_names_in_node(child))
+
+    cached = frozenset(names)
+    node._pymini_reserved_names = cached
+    node._pymini_reserved_names_version = _RESERVED_NAMES_CACHE_VERSION
+    return cached
+
+
+_RESERVED_NAMES_CACHE_VERSION = 0
+
+
+def _invalidate_reserved_names_cache():
+    global _RESERVED_NAMES_CACHE_VERSION
+    _RESERVED_NAMES_CACHE_VERSION += 1
 
 
 class RepeatedStringHoister(Transformer):
@@ -1460,6 +1479,7 @@ class RepeatedStringHoister(Transformer):
         self.generator = generator
 
     def transform(self, *trees):
+        _invalidate_reserved_names_cache()
         for tree in trees:
             ParentSetter().visit(tree)
             collector = RepeatedStringCollector()
@@ -1537,7 +1557,7 @@ class RepeatedStringRewriter(ast.NodeTransformer):
             scope_type = "class"
         else:
             scope_type = "function"
-        reserved_names = _reserved_names_in_node(node)
+        reserved_names = set(_reserved_names_in_node(node))
         return {
             value: self._next_safe_name(reserved_names)
             for value, count in counts.items()
@@ -1636,6 +1656,7 @@ class RepeatedNameAliaser(ast.NodeTransformer):
         self.generator = generator
 
     def transform(self, *trees):
+        _invalidate_reserved_names_cache()
         for tree in trees:
             self.visit(tree)
         return trees
@@ -1716,7 +1737,7 @@ class RepeatedNameCollector(ast.NodeVisitor):
         ]
         if not repeated:
             return {}
-        reserved_names = _reserved_names_in_node(statement)
+        reserved_names = set(_reserved_names_in_node(statement))
         return {
             name: allocator(reserved_names)
             for name in repeated
@@ -2304,7 +2325,7 @@ class WhitespaceRemover(NodeTransformer):
 
 def minify(sources, modules='main', keep_module_names=False,
            keep_global_variables=False, rename_arguments=False, output_single_file=False,
-           single_file_module='bundle'):
+           single_file_module='bundle', fast=True):
     """Uglify source code. Simplify, minify, and obfuscate.
 
     >>> sources, modules = minify(['''a = 3
@@ -2332,12 +2353,30 @@ def minify(sources, modules='main', keep_module_names=False,
     assert len(sources) == len(modules)
 
     trees = [ast.parse(source) for source in sources]
+    _invalidate_reserved_names_cache()
     reserved_names_by_module = [_reserved_names_in_node(tree) for tree in trees]
 
-    pipeline = Pipeline(
-
+    simplifier = ReturnSimplifier()
+    ind = IndependentVariableShorteners(
+        reserved_names_by_module=reserved_names_by_module,
+        modules=modules,
+        keep_global_variables=keep_global_variables,
+        rename_arguments=rename_arguments,
+        reuse_names_across_modules=not output_single_file,
+    )
+    fused = FusedVariableShortener(
+        generator=ind.generator,
+        module_to_shortener=ind.module_to_shortener,
+        modules=ind.modules,
+        keep_module_names=keep_module_names,
+    )
+    fuser = (
+        FileFuser(modules=fused.modules) if output_single_file
+        else Fuser(modules=fused.modules)
+    )
+    pipeline_steps = [
         # simplify
-        simplifier := ReturnSimplifier(),
+        simplifier,
         RemoveUnusedVariables(simplifier.unused_assignments),
 
         # minify
@@ -2345,33 +2384,24 @@ def minify(sources, modules='main', keep_module_names=False,
         CommentRemover(),
 
         # obfuscate
-        ind := IndependentVariableShorteners(
-            reserved_names_by_module=reserved_names_by_module,
-            modules=modules,
-            keep_global_variables=keep_global_variables,
-            rename_arguments=rename_arguments,
-            reuse_names_across_modules=not output_single_file,
-        ),  # obscure within files (but not across files)
-        fused := FusedVariableShortener(
-            generator=ind.generator,
-            module_to_shortener=ind.module_to_shortener,
-            modules=ind.modules,
-            keep_module_names=keep_module_names,
-        ),  # obfuscate across files
-        RepeatedStringHoister(ind.generator),
-        RepeatedNameAliaser(ind.generator),
-
+        ind,
+        fused,
+    ]
+    if not fast:
+        pipeline_steps.extend((
+            RepeatedStringHoister(ind.generator),
+            RepeatedNameAliaser(ind.generator),
+        ))
+    pipeline_steps.extend((
         # optionally fuse files
-        fuser := (
-            FileFuser(modules=fused.modules) if output_single_file
-            else Fuser(modules=fused.modules)
-        ),
+        fuser,
 
         # final post-processing to remove whitespace (minify)
         LocationFixer(),
         Unparser(),
         WhitespaceRemover(),
-    )
+    ))
+    pipeline = Pipeline(*pipeline_steps)
     cleaned = list(pipeline.transform(*trees))
     if output_single_file:
         cleaned = [bundle_sources(cleaned, fuser.modules, getattr(fuser, "entry_modules", None))]

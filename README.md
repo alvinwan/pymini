@@ -22,6 +22,13 @@ Bundle mode emits one file:
 pymini bundle src -o out/bundle.py
 ```
 
+The default profile now favors speed. To run the slower full pipeline with
+extra compression passes, use:
+
+```bash
+pymini package src --slow -o out
+```
+
 You can also use the Python API directly:
 
 ```python
@@ -36,10 +43,16 @@ sources, modules = minify(
 )
 ```
 
+To use the slower profile through the API:
+
+```python
+sources, modules = minify(..., fast=False)
+```
+
 # Compression
 
 Representative compression results, using
-`--rename-modules --rename-global-variables --rename-arguments`:
+`--slow --rename-modules --rename-global-variables --rename-arguments`:
 
 ![Benchmark summary chart comparing minify-only minification and minify-plus-wheel compression across packages](./benchmarks/summary.svg)
 
