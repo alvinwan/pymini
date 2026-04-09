@@ -97,30 +97,25 @@ Wheel-specific failures:
 
 | Input | pymini | pyminifier | python-minifier |
 | --- | ---: | ---: | ---: |
-| pyminifier.py | 29.3 ms | 4.1 ms | 16.1 ms |
-| pyminify.py | 36.2 ms | 7.6 ms | 28.4 ms |
-| click | 1.937 s | failed | 2.167 s |
+| pyminifier.py | 3.0 ms | 0.8 ms | 2.6 ms |
+| pyminify.py | 7.9 ms | 2.0 ms | 6.7 ms |
+| click | 855.2 ms | failed | 823.9 ms |
 | pytest | 3.258 s | failed | 3.156 s |
 | TexSoup | 218.6 ms | failed | 251.1 ms |
 | timefhuman | 441.5 ms | failed | 450.6 ms |
-| pyminifier | 180.7 ms | 73.0 ms | 197.2 ms |
+| pyminifier | 196.7 ms | 68.5 ms | 191.7 ms |
 | rich | 3.226 s | failed | 3.080 s |
 
 pyminifier minification fails on `__init__.py` with
   `TypeError: 'NoneType' object is not subscriptable`.
 
-The single-file rows use the same transforms as
-[benchmark_speed.py](./benchmark_speed.py). The broader package snapshot was
-originally averaged over three fresh-process runs from the same environment
-used for the compression comparison. `pymini` used package mode with
-`--rename-modules --rename-global-variables --rename-arguments`, while the
-baseline tools minified each file independently in the preserved package tree.
-The `click`, `pytest`, and `pyminifier` rows use the checked-in fixtures under
-`.bench-repos`; the other package rows use local package checkouts. The
-single-file rows plus the checked-in `click` and `pyminifier` fixture rows
-were refreshed in-process on April 9, 2026 for the repeated-string-hoisting
-optimization. `summary.svg` is unchanged because it only charts compression
-ratios, not speed.
+The single-file rows come from [benchmark_speed.py](./benchmark_speed.py). The
+package rows are averages of three fresh-process runs from the same
+environment used for the compression comparison. `pymini` used package mode
+with `--rename-modules --rename-global-variables --rename-arguments`, while
+the baseline tools minified each file independently in the preserved package
+tree. The `click`, `pytest`, and `pyminifier` rows use the checked-in fixtures
+under `.bench-repos`; the other package rows use local package checkouts.
 
 # Reproduce
 
